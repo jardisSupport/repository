@@ -1,0 +1,43 @@
+# Auto detect text files and normalize line endings to LF
+* text=auto eol=lf
+
+# Source code
+*.php text eol=lf diff=php
+
+# Configuration files
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.xml text eol=lf
+composer.lock text eol=lf merge=union
+
+# Documentation
+*.md text eol=lf
+
+# Shell scripts
+*.sh text eol=lf
+
+# Environment files
+.env* text eol=lf
+
+# Git files
+.gitattributes text eol=lf
+.gitignore text eol=lf
+
+# Export-ignore (exclude from composer archive)
+/.github export-ignore
+/tests export-ignore
+/support export-ignore
+/.claude export-ignore
+/vendor export-ignore
+.idea export-ignore
+.editorconfig export-ignore
+.dockerignore export-ignore
+.gitattributes export-ignore
+.composer.lock export-ignore
+.gitignore export-ignore
+Makefile export-ignore
+phpcs.xml export-ignore
+phpstan.neon export-ignore
+phpunit.xml export-ignore
+.env export-ignore

@@ -1,0 +1,11 @@
+.DS_Store
+.idea/
+.claude/
+
+vendor/
+composer.lock
+tests/reports/
+
+*.tmp
+*.cache
+*.log

@@ -1,0 +1,7 @@
+parameters:
+    # Der Level der Analyse, z.B. von 0 bis 8
+    level: 8
+
+    # Zu analysierende Verzeichnisse
+    paths:
+        - src

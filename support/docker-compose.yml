@@ -1,0 +1,114 @@
+services:
+  phpcli:
+    image: ${DOCKER_HUB:-headgent}/phpcli:${PHP_VERSION:-8.3}
+    container_name: phpcli
+    environment:
+      - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT:-512M}
+      - PHP_MAX_EXECUTION_TIME=${PHP_MAX_EXECUTION_TIME:-0}
+      - PHP_TIMEZONE=${PHP_TIMEZONE:-UTC}
+      - APCU_SHM_SIZE=${APCU_SHM_SIZE:-64M}
+      - OPCACHE_MEMORY_CONSUMPTION=${OPCACHE_MEMORY_CONSUMPTION:-128}
+      - OPCACHE_MAX_ACCELERATED_FILES=${OPCACHE_MAX_ACCELERATED_FILES:-4000}
+      - OPCACHE_REVALIDATE_FREQ=${OPCACHE_REVALIDATE_FREQ:-2}
+      - PHP_ERROR_REPORTING=${PHP_ERROR_REPORTING:-"E_ALL & ~E_DEPRECATED & ~E_STRICT"}
+      - PHP_DISPLAY_ERRORS=${PHP_DISPLAY_ERRORS:-Off}
+      - PHP_LOG_ERRORS=${PHP_LOG_ERRORS:-On}
+      - XDEBUG_MODE=${XDEBUG_MODE:-debug}
+      - XDEBUG_START_WITH_REQUEST=${XDEBUG_START_WITH_REQUEST:-yes}
+      - XDEBUG_CLIENT_HOST=${XDEBUG_CLIENT_HOST:-host.docker.internal}
+      - XDEBUG_CLIENT_PORT=${XDEBUG_CLIENT_PORT:-9003}
+      - XDEBUG_LOG_LEVEL=${XDEBUG_LOG_LEVEL:-0}
+      # Database connection environment variables for tests
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-test_db}
+      - MYSQL_USER=${MYSQL_USER:-test_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-test_password}
+      - MARIADB_HOST=mariadb
+      - MARIADB_PORT=${MARIADB_PORT:-3306}
+      - MARIADB_DATABASE=${MARIADB_DATABASE:-test_db}
+      - MARIADB_USER=${MARIADB_USER:-test_user}
+      - MARIADB_PASSWORD=${MARIADB_PASSWORD:-test_password}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DATABASE=${POSTGRES_DATABASE:-test_db}
+      - POSTGRES_USER=${POSTGRES_USER:-test_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-test_password}
+    volumes:
+      - ../:/app
+    working_dir: /app
+    networks:
+      - dbtest
+
+  mysql:
+    image: mysql:${MYSQL_VERSION:-8.0}
+    container_name: mysql_test
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root_password}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-test_db}
+      - MYSQL_USER=${MYSQL_USER:-test_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-test_password}
+    ports:
+      - ${MYSQL_HOST_PORT:-3396}:${MYSQL_PORT-3306}
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_password}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    networks:
+      - dbtest
+    profiles:
+      - test
+
+  mariadb:
+    image: mariadb:${MARIADB_VERSION:-11.2}
+    container_name: mariadb_test
+    environment:
+      - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD:-root_password}
+      - MARIADB_DATABASE=${MARIADB_DATABASE:-test_db}
+      - MARIADB_USER=${MARIADB_USER:-test_user}
+      - MARIADB_PASSWORD=${MARIADB_PASSWORD:-test_password}
+    ports:
+      - ${MARIADB_HOST_PORT:-3397}:${MARIADB_PORT-3306}
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    networks:
+      - dbtest
+    profiles:
+      - test
+
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-16}
+    container_name: postgres_test
+    environment:
+      - POSTGRES_DB=${POSTGRES_DATABASE:-test_db}
+      - POSTGRES_USER=${POSTGRES_USER:-test_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-test_password}
+    ports:
+      - ${POSTGRES_HOST_PORT:-5499}:${POSTGRES_PORT-5432}
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-test_user} -d ${POSTGRES_DATABASE:-test_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    networks:
+      - dbtest
+    profiles:
+      - test
+
+networks:
+  dbtest:
+    driver: bridge
+    name: dbtest
