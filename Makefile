@@ -15,19 +15,27 @@ help:
 <---docker------->: ## -----------------------------------------------------------------------
 start: ## Start all database containers and wait until healthy
 	@echo "Starting database containers..."
-	@$(DOCKER_COMPOSE) up -d mysql mariadb postgres
+	@$(DOCKER_COMPOSE) --profile test up -d mysql mariadb postgres mysql-replica1 mysql-replica2
 	@echo "Waiting for databases to be healthy..."
-	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
-		HEALTHY_COUNT=$$($(DOCKER_COMPOSE) ps --format json 2>/dev/null | grep -c '"Health":"healthy"' | tr -d '\n' || echo "0"); \
-		if [ "$${HEALTHY_COUNT}" -ge 3 ] 2>/dev/null; then \
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do \
+		HEALTHY_COUNT=0; \
+		if $(DOCKER_COMPOSE) ps --format json 2>/dev/null | grep -q '"Health":"healthy"'; then \
+			HEALTHY_COUNT=$$($(DOCKER_COMPOSE) ps --format json 2>/dev/null | grep -c '"Health":"healthy"' || echo "0"); \
+		elif $(DOCKER_COMPOSE) ps 2>/dev/null | grep -q "(healthy)"; then \
+			HEALTHY_COUNT=$$($(DOCKER_COMPOSE) ps 2>/dev/null | grep -c "(healthy)" || echo "0"); \
+		fi; \
+		if [ "$$HEALTHY_COUNT" -ge 5 ]; then \
 			echo "✓ All databases are healthy!"; \
 			exit 0; \
 		fi; \
-		echo "  Waiting... ($$i/15) - $${HEALTHY_COUNT}/3 databases healthy"; \
-		sleep 2; \
+		echo "  Waiting... ($$i/20) - $$HEALTHY_COUNT/5 databases healthy"; \
+		sleep 3; \
 	done; \
 	echo "✗ Timeout: Not all databases became healthy in time"; \
+	echo "Container status:"; \
 	$(DOCKER_COMPOSE) ps; \
+	echo "Container logs:"; \
+	$(DOCKER_COMPOSE) logs --tail=50; \
 	exit 1
 .PHONY: start
 
@@ -46,30 +54,30 @@ status: ## Show status of all containers
 .PHONY: status
 
 <---composer----->: ## -----------------------------------------------------------------------
-install: ## Run composer install (requires: make start)
+install: ## Run composer install
 	$(DOCKER_COMPOSE) run --rm --no-deps phpcli composer install --no-cache
 .PHONY: install
 
-update: ## Run composer update (requires: make start)
+update: ## Run composer update
 	$(DOCKER_COMPOSE) run --rm --no-deps -e XDEBUG_MODE=off phpcli composer update
 .PHONY: update
 
-autoload: ## Run composer dump-autoload (requires: make start)
+autoload: ## Run composer dump-autoload
 	$(DOCKER_COMPOSE) run --rm --no-deps phpcli composer dumpautoload
 .PHONY: autoload
 
 <---qa tools----->: ## -----------------------------------------------------------------------
 phpunit: start ## Run all tests (requires: make start)
 	$(DOCKER_COMPOSE) run --rm phpcli vendor/bin/phpunit --bootstrap ./tests/bootstrap.php /app/tests
+.PHONY: phpunit
 
-phpunit-unit: ## Run unit tests only (no Docker deps needed)
+phpunit-unit: ## Run unit tests only (fast, no services required)
 	$(DOCKER_COMPOSE) run --rm --no-deps phpcli vendor/bin/phpunit --testsuite "Unit Tests"
 .PHONY: phpunit-unit
 
 phpunit-integration: start ## Run integration tests only (requires: make start)
 	$(DOCKER_COMPOSE) run --rm phpcli vendor/bin/phpunit --testsuite "Integration Tests"
 .PHONY: phpunit-integration
-.PHONY: phpunit
 
 phpunit-reports: start ## Run all tests with reports (requires: make start)
 	$(DOCKER_COMPOSE) run --rm -e PCOV_ENABLED=1 phpcli vendor/bin/phpunit --bootstrap ./tests/bootstrap.php /app/tests --coverage-clover tests/reports/clover.xml --coverage-xml tests/reports/coverage-xml
@@ -83,17 +91,17 @@ phpunit-coverage-html: start ## Run all tests with HTML coverage (requires: make
 	$(DOCKER_COMPOSE) run --rm -e PCOV_ENABLED=1 phpcli vendor/bin/phpunit --bootstrap ./tests/bootstrap.php /app/tests --coverage-html tests/reports/coverage-html
 .PHONY: phpunit-coverage-html
 
-phpstan: ## Run PHPStan analysis (requires: make start)
-	$(DOCKER_COMPOSE) run --rm phpcli vendor/bin/phpstan analyse /app/src -c phpstan.neon
+phpstan: ## Run PHPStan analysis
+	$(DOCKER_COMPOSE) run --rm --no-deps phpcli vendor/bin/phpstan analyse /app/src -c phpstan.neon
 .PHONY: phpstan
 
-phpcs: ## Run coding standards (requires: make start)
-	$(DOCKER_COMPOSE) run --rm phpcli vendor/bin/phpcs /app/src
+phpcs: ## Run coding standards
+	$(DOCKER_COMPOSE) run --rm --no-deps phpcli vendor/bin/phpcs /app/src
 .PHONY: phpcs
 
 <---development----->: ## -----------------------------------------------------------------------
-shell: ## Run a shell inside the phpcli container (requires: make start)
-	$(DOCKER_COMPOSE) run --rm -it phpcli sh
+shell: ## Run a shell inside the phpcli container
+	$(DOCKER_COMPOSE) run --rm --no-deps -it phpcli sh
 .PHONY: shell
 
 logs: ## Show logs from all containers
