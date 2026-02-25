@@ -15,7 +15,7 @@ help:
 <---docker------->: ## -----------------------------------------------------------------------
 start: ## Start all database containers and wait until healthy
 	@echo "Starting database containers..."
-	@$(DOCKER_COMPOSE) --profile test up -d mysql mariadb postgres mysql-replica1 mysql-replica2
+	@$(DOCKER_COMPOSE) --profile test up -d mysql mariadb postgres
 	@echo "Waiting for databases to be healthy..."
 	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do \
 		HEALTHY_COUNT=0; \
@@ -24,11 +24,11 @@ start: ## Start all database containers and wait until healthy
 		elif $(DOCKER_COMPOSE) ps 2>/dev/null | grep -q "(healthy)"; then \
 			HEALTHY_COUNT=$$($(DOCKER_COMPOSE) ps 2>/dev/null | grep -c "(healthy)" || echo "0"); \
 		fi; \
-		if [ "$$HEALTHY_COUNT" -ge 5 ]; then \
+		if [ "$$HEALTHY_COUNT" -ge 3 ]; then \
 			echo "✓ All databases are healthy!"; \
 			exit 0; \
 		fi; \
-		echo "  Waiting... ($$i/20) - $$HEALTHY_COUNT/5 databases healthy"; \
+		echo "  Waiting... ($$i/20) - $$HEALTHY_COUNT/3 databases healthy"; \
 		sleep 3; \
 	done; \
 	echo "✗ Timeout: Not all databases became healthy in time"; \
