@@ -1,0 +1,134 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'composer.json'
+      - '.github/workflows/**'
+      - 'Makefile'
+      - 'makefile'
+      - 'phpcs.xml'
+      - 'phpstan.neon'
+      - 'phpunit.xml'
+      - '.env.example'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'composer.json'
+      - '.github/workflows/**'
+      - 'Makefile'
+      - 'makefile'
+      - 'phpcs.xml'
+      - 'phpstan.neon'
+      - 'phpunit.xml'
+      - '.env.example'
+  workflow_dispatch:
+
+jobs:
+  phpcs:
+    name: phpcs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup environment
+        run: cp .env.example .env
+
+      - name: Login to Docker Hub
+        env:
+          DOCKER_CONFIG: /tmp/.docker
+        run: |
+          mkdir -p $DOCKER_CONFIG
+          echo "${{ secrets.DOCKER_PAT }}" | docker login -u "${{ secrets.DOCKER_USER_NAME }}" --password-stdin
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Check Code Standards
+        run: make phpcs
+
+      - name: Cleanup
+        if: always()
+        run: make remove
+
+      - name: Logout from Docker Hub
+        if: always()
+        env:
+          DOCKER_CONFIG: /tmp/.docker
+        run: docker logout
+
+  phpstan:
+    name: phpstan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup environment
+        run: cp .env.example .env
+
+      - name: Login to Docker Hub
+        env:
+          DOCKER_CONFIG: /tmp/.docker
+        run: |
+          mkdir -p $DOCKER_CONFIG
+          echo "${{ secrets.DOCKER_PAT }}" | docker login -u "${{ secrets.DOCKER_USER_NAME }}" --password-stdin
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Run PHPStan
+        run: make phpstan
+
+      - name: Cleanup
+        if: always()
+        run: make remove
+
+      - name: Logout from Docker Hub
+        if: always()
+        env:
+          DOCKER_CONFIG: /tmp/.docker
+        run: docker logout
+
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup environment
+        run: cp .env.example .env
+
+      - name: Login to Docker Hub
+        env:
+          DOCKER_CONFIG: /tmp/.docker
+        run: |
+          mkdir -p $DOCKER_CONFIG
+          echo "${{ secrets.DOCKER_PAT }}" | docker login -u "${{ secrets.DOCKER_USER_NAME }}" --password-stdin
+
+      - name: Start Docker Environment
+        run: make start
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Run PHPUnit Tests
+        run: make phpunit-coverage
+
+      - name: Tear Down Docker Environment
+        if: always()
+        run: make stop
+
+      - name: Cleanup
+        if: always()
+        run: make remove
+
+      - name: Logout from Docker Hub
+        if: always()
+        env:
+          DOCKER_CONFIG: /tmp/.docker
+        run: docker logout

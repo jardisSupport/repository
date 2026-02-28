@@ -1,0 +1,50 @@
+{
+    "name": "jardissupport/repository",
+    "description": "Generic CRUD repository with raw data, read/write splitting, and primary key strategies",
+    "type": "library",
+    "license": "PolyForm-Noncommercial-1.0.0",
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "authors": [
+        {
+            "name": "Jardis Development",
+            "email": "jardisDev@headgent.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.2",
+        "jardisport/dbconnection": "^1.0",
+        "jardissupport/dbquery": "^1.0",
+        "ext-pdo": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5",
+        "phpstan/phpstan": "^2.0.4",
+        "squizlabs/php_codesniffer": "^3.11.2",
+        "jardisadapter/dbconnection": "^1.0",
+        "jardissupport/dotenv": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "JardisSupport\\Repository\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "JardisSupport\\Repository\\Tests\\": "tests/"
+        }
+    },
+    "homepage": "https://github.com/jardisSupport/repository",
+    "support": {
+        "issues": "https://github.com/jardisSupport/repository/issues",
+        "email": "jardisDev@headgent.com"
+    },
+    "keywords": [
+        "repository",
+        "crud",
+        "database",
+        "jardis",
+        "Headgent",
+        "php"
+    ]
+}

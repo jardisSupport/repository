@@ -1,0 +1,23 @@
+name: Sync develop
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  sync:
+    name: sync main → develop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SHARED_CONFIG_TOKEN }}
+          fetch-depth: 0
+
+      - name: Fast-forward develop to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout develop
+          git merge --ff-only main
+          git push origin develop
