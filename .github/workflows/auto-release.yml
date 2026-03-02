@@ -1,0 +1,223 @@
+name: Auto Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [develop]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: auto-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  # PATCH: fix/* or hotfix/* merged → develop
+  # Fully automatic: PR → merge → tag → release
+  # ──────────────────────────────────────────────────────────────
+  release-patch:
+    name: Auto PATCH Release
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      (startsWith(github.event.pull_request.head.ref, 'fix/') ||
+       startsWith(github.event.pull_request.head.ref, 'hotfix/'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SHARED_CONFIG_TOKEN }}
+          fetch-depth: 0
+
+      - name: Calculate PATCH version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag -l 'v*' --sort=-version:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v1.0.0"
+          fi
+          MAJOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f2)
+          PATCH=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f3)
+          NEW_VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "::notice::Release $NEW_VERSION (PATCH from $LATEST_TAG)"
+
+      - name: Create Release PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.SHARED_CONFIG_TOKEN }}
+        run: |
+          EXISTING=$(gh pr list --base main --head develop --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --title "release: ${{ steps.version.outputs.version }}"
+            echo "number=$EXISTING" >> "$GITHUB_OUTPUT"
+          else
+            PR_URL=$(gh pr create \
+              --base main \
+              --head develop \
+              --title "release: ${{ steps.version.outputs.version }}" \
+              --body "Auto PATCH release triggered by \`${{ github.event.pull_request.head.ref }}\`.")
+            echo "number=$(echo "$PR_URL" | grep -oE '[0-9]+$')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge Release PR
+        env:
+          GH_TOKEN: ${{ secrets.SHARED_CONFIG_TOKEN }}
+        run: gh pr merge "${{ steps.pr.outputs.number }}" --merge --admin
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.SHARED_CONFIG_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "${{ steps.version.outputs.version }}" \
+            --generate-notes \
+            --target main
+
+  # ──────────────────────────────────────────────────────────────
+  # FEATURE: feature/* merged → develop
+  # Creates Release PR, waits for /release minor|major command
+  # ──────────────────────────────────────────────────────────────
+  release-pr:
+    name: Feature Release PR
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'feature/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SHARED_CONFIG_TOKEN }}
+
+      - name: Create or update Release PR
+        env:
+          GH_TOKEN: ${{ secrets.SHARED_CONFIG_TOKEN }}
+          FEATURE_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          EXISTING=$(gh pr list --base main --head develop --state open --json number --jq '.[0].number // empty')
+
+          if [ -n "$EXISTING" ]; then
+            gh pr comment "$EXISTING" --body "Feature \`${FEATURE_BRANCH}\` merged.
+          Use \`/release minor\` or \`/release major\` to create the release."
+          else
+            gh pr create \
+              --base main \
+              --head develop \
+              --title "release: pending version" \
+              --body "Feature \`${FEATURE_BRANCH}\` merged into develop.
+
+          **Choose release type:**
+          - \`/release minor\` — new feature, backward compatible
+          - \`/release major\` — breaking changes
+
+          Only users with write access can trigger the release."
+          fi
+
+  # ──────────────────────────────────────────────────────────────
+  # /release COMMAND: Triggered by comment on Release PR
+  # Validates, calculates version, merges, tags, releases
+  # ──────────────────────────────────────────────────────────────
+  release-comment:
+    name: Process /release command
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/release ')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate permissions
+        run: |
+          ASSOCIATION="${{ github.event.comment.author_association }}"
+          if [[ "$ASSOCIATION" != "OWNER" && "$ASSOCIATION" != "MEMBER" && "$ASSOCIATION" != "COLLABORATOR" ]]; then
+            echo "::error::Insufficient permissions ($ASSOCIATION). Need write access."
+            exit 1
+          fi
+
+      - name: Parse release type
+        id: parse
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          COMMAND=$(echo "$COMMENT_BODY" | head -1 | xargs)
+          if [[ "$COMMAND" == "/release minor" ]]; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          elif [[ "$COMMAND" == "/release major" ]]; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Invalid command. Use '/release minor' or '/release major'"
+            exit 1
+          fi
+
+      - name: Validate PR
+        env:
+          GH_TOKEN: ${{ secrets.SHARED_CONFIG_TOKEN }}
+        run: |
+          PR_DATA=$(gh pr view "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --json state,baseRefName,headRefName)
+          STATE=$(echo "$PR_DATA" | jq -r '.state')
+          BASE=$(echo "$PR_DATA" | jq -r '.baseRefName')
+          HEAD=$(echo "$PR_DATA" | jq -r '.headRefName')
+
+          if [ "$STATE" != "OPEN" ]; then
+            echo "::error::PR #${{ github.event.issue.number }} is $STATE, not OPEN"
+            exit 1
+          fi
+          if [ "$BASE" != "main" ] || [ "$HEAD" != "develop" ]; then
+            echo "::error::Expected develop → main, got $HEAD → $BASE"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SHARED_CONFIG_TOKEN }}
+          fetch-depth: 0
+
+      - name: Calculate version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag -l 'v*' --sort=-version:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v1.0.0"
+          fi
+          MAJOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f2)
+
+          TYPE="${{ steps.parse.outputs.type }}"
+          if [ "$TYPE" == "minor" ]; then
+            NEW_VERSION="v${MAJOR}.$((MINOR + 1)).0"
+          else
+            NEW_VERSION="v$((MAJOR + 1)).0.0"
+          fi
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "::notice::Release $NEW_VERSION ($TYPE from $LATEST_TAG)"
+
+      - name: Update PR and merge
+        env:
+          GH_TOKEN: ${{ secrets.SHARED_CONFIG_TOKEN }}
+        run: |
+          gh pr edit "${{ github.event.issue.number }}" --title "release: ${{ steps.version.outputs.version }}"
+          gh pr merge "${{ github.event.issue.number }}" --merge --admin
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.SHARED_CONFIG_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "${{ steps.version.outputs.version }}" \
+            --generate-notes \
+            --target main
+
+      - name: Add reaction
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content="rocket" --silent || true
