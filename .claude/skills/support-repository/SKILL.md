@@ -27,7 +27,7 @@ Repository (Facade, implements RepositoryInterface)
       ├── ExistsHandler           SELECT 1 WHERE pk = :id LIMIT 1
       └── IntegerPkGenerator      MAX+1 with 3 retries
 
-PkStrategy (Enum from jardissupport/contract):
+PkStrategy (Enum from jardissupport/contracts):
   AUTOINCREMENT → DB (AUTO_INCREMENT/SERIAL), lastInsertId → int
   INTEGER       → MAX+1, 3 retries on Duplicate Key → int
   NONE          → caller provides PK in $values → int|string
@@ -103,5 +103,5 @@ use JardisSupport\Contract\Repository\Exception\{PersistException, RecordNotFoun
 - Always `prepared: true` (SQL injection protection)
 
 ## DEPENDENCIES
-- `jardissupport/contract` — `RepositoryInterface`, `PkStrategy`, `PersistException`, `RecordNotFoundException`, `ConnectionPoolInterface`, `DbConnectionInterface`
+- `jardissupport/contracts` — `RepositoryInterface`, `PkStrategy`, `PersistException`, `RecordNotFoundException`, `ConnectionPoolInterface`, `DbConnectionInterface`
 - `jardissupport/dbquery` — `DbQuery`, `DbInsert`, `DbUpdate`, `DbDelete`, `DbPreparedQuery`
