@@ -1,0 +1,55 @@
+{
+    "name": "jardissupport/repository",
+    "homepage": "https://jardis.io",
+    "description": "Repository pattern for PHP — generic CRUD with raw-data access, read/write splitting, and pluggable primary-key strategies; the persistence layer Jardis-generated repositories build on",
+    "type": "library",
+    "license": "MIT",
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "authors": [
+        {
+            "name": "Jardis Development",
+            "email": "jardisDev@headgent.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.2",
+        "jardissupport/contracts": "^1.0",
+        "jardissupport/dbquery": "^1.0",
+        "ext-pdo": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "10.5.63",
+        "phpstan/phpstan": "2.1.56",
+        "squizlabs/php_codesniffer": "3.13.5",
+        "jardisadapter/dbconnection": "^1.0",
+        "jardissupport/dotenv": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "JardisSupport\\Repository\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "JardisSupport\\Repository\\Tests\\": "tests/"
+        }
+    },
+    "support": {
+        "issues": "https://github.com/jardisSupport/repository/issues",
+        "docs": "https://docs.jardis.io/en/support/repository",
+        "email": "jardisDev@headgent.com"
+    },
+    "keywords": [
+        "repository",
+        "repository-pattern",
+        "crud",
+        "database",
+        "persistence",
+        "domain-driven-design",
+        "hexagonal-architecture",
+        "jardis",
+        "headgent",
+        "php"
+    ]
+}

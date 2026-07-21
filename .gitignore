@@ -1,0 +1,22 @@
+.DS_Store
+.idea/
+
+vendor/
+composer.lock
+tests/reports/
+
+*.tmp
+*.cache
+*.log
+/.env
+*.key
+.claude/CLAUDE.md
+.claude/settings.local.json
+.claude/cache/
+
+# docs/ wird lokal gehalten, nicht committet (inkl. Session-Handover-Doku)
+docs/
+
+# dev-skills Skill-Backups — lokal, nie committen
+.claude/skills/*.backup/
+AGENTS.md.backup
