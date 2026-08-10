@@ -31,7 +31,8 @@ final class PdoRepositoryTest extends TestCase
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 email TEXT,
-                status TEXT DEFAULT \'active\'
+                status TEXT DEFAULT \'active\',
+                active INTEGER
             )
         ');
 
@@ -219,5 +220,311 @@ final class PdoRepositoryTest extends TestCase
         $query = (new DbQuery())->select('COUNT(*) as cnt')->from(self::TABLE);
         $rows = $this->repository->findByQuery($query);
         $this->assertSame(1, (int) $rows[0]['cnt']);
+    }
+
+    // ── CONDITIONAL UPDATE (expected) ──────────────────────────────
+
+    public function testUpdateWithMatchingExpectedReturnsTrueAndUpdatesRow(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'status' => 'active']);
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['status' => 'active'],
+        );
+
+        $this->assertTrue($result);
+        $row = $this->repository->findById(self::TABLE, self::PK, $id);
+        $this->assertSame('Alice Updated', $row['name']);
+    }
+
+    public function testUpdateWithStaleExpectedReturnsFalseAndLeavesRowUnchanged(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'status' => 'active']);
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['status' => 'stale-value'],
+        );
+
+        $this->assertFalse($result);
+        $row = $this->repository->findById(self::TABLE, self::PK, $id);
+        $this->assertSame('Alice', $row['name']);
+    }
+
+    // U4: null-Erwartung in beide Richtungen
+    public function testUpdateWithNullExpectedMatchesNullColumn(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice']);
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['email' => null],
+        );
+
+        $this->assertTrue($result);
+    }
+
+    public function testUpdateWithNullExpectedDoesNotMatchNonNullColumn(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'email' => 'alice@example.com']);
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['email' => null],
+        );
+
+        $this->assertFalse($result);
+    }
+
+    // U5: Mehrfeld-Erwartung
+    public function testUpdateWithMultiFieldExpectedMatchesAllColumns(): void
+    {
+        $id = $this->repository->insert(
+            self::TABLE,
+            self::PK,
+            ['name' => 'Alice', 'email' => 'alice@example.com', 'status' => 'active'],
+        );
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['email' => 'alice@example.com', 'status' => 'active'],
+        );
+
+        $this->assertTrue($result);
+    }
+
+    public function testUpdateWithMultiFieldExpectedFailsWhenOneFieldMismatches(): void
+    {
+        $id = $this->repository->insert(
+            self::TABLE,
+            self::PK,
+            ['name' => 'Alice', 'email' => 'alice@example.com', 'status' => 'active'],
+        );
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['email' => 'alice@example.com', 'status' => 'inactive'],
+        );
+
+        $this->assertFalse($result);
+        $row = $this->repository->findById(self::TABLE, self::PK, $id);
+        $this->assertSame('Alice', $row['name']);
+    }
+
+    // ── CONDITIONAL DELETE (expected) ──────────────────────────────
+
+    public function testDeleteWithMatchingExpectedReturnsTrueAndRemovesRow(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'status' => 'active']);
+
+        $result = $this->repository->delete(self::TABLE, self::PK, $id, ['status' => 'active']);
+
+        $this->assertTrue($result);
+        $this->assertNull($this->repository->findById(self::TABLE, self::PK, $id));
+    }
+
+    public function testDeleteWithStaleExpectedReturnsFalseAndLeavesRowInPlace(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'status' => 'active']);
+
+        $result = $this->repository->delete(self::TABLE, self::PK, $id, ['status' => 'stale-value']);
+
+        $this->assertFalse($result);
+        $this->assertNotNull($this->repository->findById(self::TABLE, self::PK, $id));
+    }
+
+    public function testDeleteWithNullExpectedMatchesNullColumn(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice']);
+
+        $result = $this->repository->delete(self::TABLE, self::PK, $id, ['email' => null]);
+
+        $this->assertTrue($result);
+        $this->assertNull($this->repository->findById(self::TABLE, self::PK, $id));
+    }
+
+    // ── VERTRAGSGRENZEN (Blocker-Befunde) ──────────────────────────
+
+    // U9: leeres $values + gesetztes $expected
+    public function testUpdateWithEmptyValuesAndNonEmptyExpectedThrows(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'status' => 'active']);
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->repository->update(self::TABLE, self::PK, $id, [], ['status' => 'active']);
+    }
+
+    public function testUpdateWithEmptyValuesAndEmptyExpectedStillReturnsTrue(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice']);
+
+        $result = $this->repository->update(self::TABLE, self::PK, $id, [], []);
+
+        $this->assertTrue($result);
+    }
+
+    // U10: nur scalar|null in $expected
+    public function testUpdateWithObjectExpectedValueThrows(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice']);
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->repository->update(self::TABLE, self::PK, $id, ['name' => 'Bob'], ['status' => new \DateTime()]);
+    }
+
+    public function testUpdateWithArrayExpectedValueThrows(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice']);
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->repository->update(self::TABLE, self::PK, $id, ['name' => 'Bob'], ['status' => ['active']]);
+    }
+
+    public function testDeleteWithObjectExpectedValueThrows(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice']);
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->repository->delete(self::TABLE, self::PK, $id, ['status' => new \DateTime()]);
+    }
+
+    // U11: leerer String vs. NULL sind verschiedene Erwartungen
+    public function testUpdateWithEmptyStringExpectedDoesNotMatchNullColumn(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'email' => null]);
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['email' => ''],
+        );
+
+        $this->assertFalse($result);
+    }
+
+    public function testUpdateWithNullExpectedDoesNotMatchEmptyStringColumn(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'email' => '']);
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['email' => null],
+        );
+
+        $this->assertFalse($result);
+    }
+
+    public function testUpdateWithEmptyStringExpectedMatchesEmptyStringColumn(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'email' => '']);
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['email' => ''],
+        );
+
+        $this->assertTrue($result);
+    }
+
+    // U12: Treiber-Verhalten gepinnt (SQLite), nicht versprochen
+    public function testUpdateWithStringNumericExpectedMatchesIntegerColumn(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice']);
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['id' => (string) $id],
+        );
+
+        $this->assertTrue($result);
+    }
+
+    public function testUpdateWithBooleanExpectedMatchesBooleanColumnParityWithValues(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'active' => true]);
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['active' => true],
+        );
+
+        $this->assertTrue($result);
+    }
+
+    public function testUpdateWithBooleanExpectedDoesNotMatchOppositeBooleanColumn(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice', 'active' => true]);
+
+        $result = $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['active' => false],
+        );
+
+        $this->assertFalse($result);
+    }
+
+    // U13: Erwartung auf nicht existierende Spalte -> PersistException
+    public function testUpdateWithExpectedOnNonexistentColumnThrowsPersistException(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice']);
+
+        $this->expectException(PersistException::class);
+
+        $this->repository->update(
+            self::TABLE,
+            self::PK,
+            $id,
+            ['name' => 'Alice Updated'],
+            ['nonexistent_column' => 'value'],
+        );
+    }
+
+    public function testDeleteWithExpectedOnNonexistentColumnThrowsPersistException(): void
+    {
+        $id = $this->repository->insert(self::TABLE, self::PK, ['name' => 'Alice']);
+
+        $this->expectException(PersistException::class);
+
+        $this->repository->delete(self::TABLE, self::PK, $id, ['nonexistent_column' => 'value']);
     }
 }

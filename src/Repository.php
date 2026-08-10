@@ -55,25 +55,34 @@ final class Repository implements RepositoryInterface
         return ($this->insertHandler)($table, $pkColumn, $values, $pkStrategy);
     }
 
+    /**
+     * @param array<string, mixed> $values
+     * @param array<string, scalar|null> $expected Spalte => erwarteter Wert; null => IS NULL
+     */
     public function update(
         string $table,
         string $pkColumn,
         int|string $id,
         array $values,
+        array $expected = [],
     ): bool {
         $this->updateHandler ??= new UpdateHandler($this->writer());
 
-        return ($this->updateHandler)($table, $pkColumn, $id, $values);
+        return ($this->updateHandler)($table, $pkColumn, $id, $values, $expected);
     }
 
+    /**
+     * @param array<string, scalar|null> $expected Spalte => erwarteter Wert; null => IS NULL
+     */
     public function delete(
         string $table,
         string $pkColumn,
         int|string $id,
+        array $expected = [],
     ): bool {
         $this->deleteHandler ??= new DeleteHandler($this->writer());
 
-        return ($this->deleteHandler)($table, $pkColumn, $id);
+        return ($this->deleteHandler)($table, $pkColumn, $id, $expected);
     }
 
     public function deleteAll(

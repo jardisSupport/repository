@@ -490,4 +490,31 @@ final class RepositoryTest extends TestCase
 
         $this->assertFalse($this->repository->exists(self::TABLE_AUTO, self::PK, $id));
     }
+
+    // ── CONDITIONAL WRITE — COLLISION SCENARIO (I1, MySQL) ────────────
+
+    public function testConditionalUpdateCollisionScenario(): void
+    {
+        $repositoryA = new Repository(self::$pool);
+        $repositoryB = new Repository(self::$pool);
+
+        $id = $repositoryA->insert(self::TABLE_AUTO, self::PK, ['name' => 'Alice', 'age' => 100]);
+
+        // Both "clients" read the same starting age (100).
+        $readByA = $repositoryA->findById(self::TABLE_AUTO, self::PK, $id);
+        $readByB = $repositoryB->findById(self::TABLE_AUTO, self::PK, $id);
+        $this->assertSame(100, $readByA['age']);
+        $this->assertSame(100, $readByB['age']);
+
+        // A writes first, expecting the age it read.
+        $resultA = $repositoryA->update(self::TABLE_AUTO, self::PK, $id, ['age' => 150], ['age' => 100]);
+        $this->assertTrue($resultA);
+
+        // B writes with the now-stale expectation and loses.
+        $resultB = $repositoryB->update(self::TABLE_AUTO, self::PK, $id, ['age' => 200], ['age' => 100]);
+        $this->assertFalse($resultB);
+
+        $row = $repositoryA->findById(self::TABLE_AUTO, self::PK, $id);
+        $this->assertSame(150, $row['age']);
+    }
 }
