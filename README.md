@@ -22,6 +22,7 @@ An implementation of the repository pattern for PHP: a generic CRUD repository o
 - **Query Builder Support** — `findByQuery()` accepts any `DbQueryBuilderInterface` for complex SELECT statements
 - **Exists Check** — `exists()` avoids full row fetches when only presence matters
 - **Batch Delete** — `deleteAll()` removes multiple rows in a single call
+- **Conditional Writes** — optional `$expected` on `update()`/`delete()` guards against stale reads (optimistic concurrency); returns `false` when the row no longer matches
 - **Lazy Connection Initialization** — reader and writer connections are opened only when first used
 
 ---
@@ -91,6 +92,39 @@ if ($repository->exists('users', 'id', $userId)) {
     // ...
 }
 ```
+
+### Conditional writes (optimistic concurrency)
+
+```php
+public function update(
+    string $table, string $pkColumn, int|string $id, array $values,
+    array $expected = [],   // column => value the row must still carry; null => IS NULL
+): bool;
+
+public function delete(
+    string $table, string $pkColumn, int|string $id,
+    array $expected = [],
+): bool;
+```
+
+`$expected` pins the write to the values a caller already read — one extra `AND` condition per column. If the row no longer carries those values, the statement touches 0 rows and the call returns `false` instead of silently overwriting a stale read.
+
+```php
+// Two readers fetch the same row: ['status' => 'pending', ...]
+$row = $repository->findById('orders', 'id', $id);
+
+// Reader A writes first — the row still matches, write succeeds
+$repository->update('orders', 'id', $id, ['status' => 'confirmed'], ['status' => 'pending']); // true
+
+// Reader B writes second, unaware A already won — the row no longer matches
+$repository->update('orders', 'id', $id, ['status' => 'cancelled'], ['status' => 'pending']); // false
+```
+
+> - `null` in `$expected` maps to `IS NULL`, not `= NULL`.
+> - `false` means the row no longer carries the expected values — or the `id` doesn't exist. For a conflict check both are the same signal: the read this write was based on is no longer valid.
+> - `$expected` values must be `scalar|null`; an object or array throws `InvalidArgumentException`.
+> - An empty `$values` combined with a non-empty `$expected` throws `InvalidArgumentException` too — the existing "nothing to write" shortcut would otherwise skip the check silently and return `true` unchecked. Use `exists()`/`findById()` for a pure read-side check.
+> - **MySQL note:** `rowCount()` counts changed rows — an update that would set identical values reports `0`. This doesn't fire for repositories built from changed-field diffs, but it's a caveat if `$values` is assembled differently.
 
 ## Documentation
 
