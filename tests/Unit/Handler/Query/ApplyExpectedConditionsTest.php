@@ -51,7 +51,9 @@ final class ApplyExpectedConditionsTest extends TestCase
         $prepared = ($this->applyExpectedConditions)($query, ['status' => 'active'])
             ->sql('sqlite', prepared: true);
 
-        $this->assertStringContainsString('AND status = ?', $prepared->sql());
+        // dbquery >=1.1.0 auto-quotes simple identifiers (CHANGELOG "Identifier
+        // auto-quoting"); assert the condition shape, not a literal SQL string.
+        $this->assertMatchesRegularExpression('/AND\s+`?status`?\s*=\s*\?/', $prepared->sql());
         $this->assertSame(['X', 1, 'active'], $prepared->bindings());
     }
 
@@ -62,7 +64,8 @@ final class ApplyExpectedConditionsTest extends TestCase
         $prepared = ($this->applyExpectedConditions)($query, ['email' => null])
             ->sql('sqlite', prepared: true);
 
-        $this->assertStringContainsString('AND email IS NULL', $prepared->sql());
+        // s.o.: dbquery auto-quotes simple identifiers — match the shape, not the literal.
+        $this->assertMatchesRegularExpression('/AND\s+`?email`?\s+IS NULL/', $prepared->sql());
         $this->assertSame(['X', 1], $prepared->bindings());
     }
 
@@ -75,8 +78,9 @@ final class ApplyExpectedConditionsTest extends TestCase
         $prepared = ($this->applyExpectedConditions)($query, ['status' => 'active', 'email' => null])
             ->sql('sqlite', prepared: true);
 
-        $this->assertStringContainsString('AND status = ?', $prepared->sql());
-        $this->assertStringContainsString('AND email IS NULL', $prepared->sql());
+        // s.o.: dbquery auto-quotes simple identifiers — match the shape, not the literal.
+        $this->assertMatchesRegularExpression('/AND\s+`?status`?\s*=\s*\?/', $prepared->sql());
+        $this->assertMatchesRegularExpression('/AND\s+`?email`?\s+IS NULL/', $prepared->sql());
         $this->assertSame(['X', 1, 'active'], $prepared->bindings());
     }
 
