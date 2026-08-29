@@ -13,6 +13,13 @@ use PDO;
  */
 final class IntegerPkGenerator
 {
+    private readonly BindTypedParameters $bindTypedParameters;
+
+    public function __construct(?BindTypedParameters $bindTypedParameters = null)
+    {
+        $this->bindTypedParameters = $bindTypedParameters ?? new BindTypedParameters();
+    }
+
     public function generate(PDO $pdo, string $dialect, string $table, string $pkColumn): int
     {
         $prepared = (new DbQuery())
@@ -24,7 +31,8 @@ final class IntegerPkGenerator
         \assert($prepared instanceof DbPreparedQueryInterface);
 
         $stmt = $pdo->prepare($prepared->sql());
-        $stmt->execute($prepared->bindings());
+        ($this->bindTypedParameters)($stmt, $prepared->bindings());
+        $stmt->execute();
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($row === false) {

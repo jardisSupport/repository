@@ -15,13 +15,17 @@ final readonly class QueryExecutor
 {
     private string $dialect;
 
+    private BindTypedParameters $bindTypedParameters;
+
     public function __construct(
         private DbConnectionInterface $connection,
+        ?BindTypedParameters $bindTypedParameters = null,
     ) {
         $this->dialect = match ($connection->getDriverName()) {
             'pgsql' => 'postgres',
             default => $connection->getDriverName(),
         };
+        $this->bindTypedParameters = $bindTypedParameters ?? new BindTypedParameters();
     }
 
     /**
@@ -30,7 +34,8 @@ final readonly class QueryExecutor
     public function fetchAll(DbPreparedQueryInterface $prepared): array
     {
         $stmt = $this->connection->pdo()->prepare($prepared->sql());
-        $stmt->execute($prepared->bindings());
+        ($this->bindTypedParameters)($stmt, $prepared->bindings());
+        $stmt->execute();
 
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
@@ -41,7 +46,8 @@ final readonly class QueryExecutor
     public function fetchOne(DbPreparedQueryInterface $prepared): ?array
     {
         $stmt = $this->connection->pdo()->prepare($prepared->sql());
-        $stmt->execute($prepared->bindings());
+        ($this->bindTypedParameters)($stmt, $prepared->bindings());
+        $stmt->execute();
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         return $row === false ? null : $row;
@@ -50,7 +56,8 @@ final readonly class QueryExecutor
     public function execute(DbPreparedQueryInterface $prepared): \PDOStatement
     {
         $stmt = $this->connection->pdo()->prepare($prepared->sql());
-        $stmt->execute($prepared->bindings());
+        ($this->bindTypedParameters)($stmt, $prepared->bindings());
+        $stmt->execute();
 
         return $stmt;
     }
