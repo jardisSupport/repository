@@ -76,6 +76,7 @@ use JardisSupport\Contract\Repository\Exception\{PersistException, RecordNotFoun
 | Update/Delete/DeleteAll: `PDOException` | `PersistException` |
 | `$expected` non-scalar value, or empty `$values` with non-empty `$expected` | `InvalidArgumentException` |
 | Duplicate Key detection | MySQL/Postgres SQLSTATE `23000`; SQLite string match `UNIQUE constraint failed` |
+| Parameter binding (v1.2.0+) | `Handler/BindTypedParameters` binds each value via `bindValue()` with `PDO::PARAM_BOOL`/`PARAM_INT`/`PARAM_NULL`/`PARAM_STR` — `false` reaches Postgres as BOOLEAN, not `''`. **< v1.2.0:** `execute($bindings)` bound everything as string → Postgres `SQLSTATE[22P02] invalid input syntax for type boolean: ""`; there, bind bools as int 0/1 yourself. |
 | `RecordNotFoundException` | Defined in contract — not thrown internally; for custom implementations |
 
 ## LAYER RULES
