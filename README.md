@@ -24,6 +24,7 @@ An implementation of the repository pattern for PHP: a generic CRUD repository o
 - **Batch Delete** — `deleteAll()` removes multiple rows in a single call
 - **Conditional Writes** — optional `$expected` on `update()`/`delete()` guards against stale reads (optimistic concurrency); returns `false` when the row no longer matches
 - **Lazy Connection Initialization** — reader and writer connections are opened only when first used
+- **Typed Bindings** — every value is bound with its matching `PDO::PARAM_*` type (bool/int/null/string) instead of a blanket `execute($bindings)`; `false` reaches Postgres as a real `BOOLEAN`, not as `''`
 
 ---
 
