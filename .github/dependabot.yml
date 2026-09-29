@@ -1,13 +1,20 @@
 version: 2
 updates:
+  # No version-update PRs for composer: QA tools are pinned exactly and raised
+  # in deliberate fleet sweeps. Security updates stay enabled.
   - package-ecosystem: "composer"
     directory: "/"
     target-branch: develop
     schedule:
       interval: "monthly"
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: develop
     schedule:
-      interval: "monthly"
+      interval: "quarterly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
