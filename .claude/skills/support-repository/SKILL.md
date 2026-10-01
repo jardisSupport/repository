@@ -4,7 +4,7 @@ description: jardissupport/repository - Generic CRUD repository with raw data, r
 user-invocable: false
 zone: post-active
 persona: C
-prerequisites: [rules-architecture, rules-patterns, adapter-dbconnection, support-data]
+prerequisites: [foundation-architecture, foundation-patterns, adapter-dbconnection, support-data]
 next: []
 ---
 
