@@ -8,6 +8,7 @@ use JardisAdapter\DbConnection\ConnectionPool;
 use JardisAdapter\DbConnection\Factory\ConnectionFactory;
 use JardisSupport\Contract\DbConnection\ConnectionPoolInterface;
 use JardisSupport\Contract\Repository\Exception\PersistException;
+use JardisSupport\Contract\Repository\Exception\UniqueViolationException;
 use JardisSupport\Contract\Repository\PrimaryKey\PkStrategy;
 use JardisSupport\DbQuery\DbQuery;
 use JardisSupport\Repository\Repository;
@@ -19,6 +20,7 @@ final class RepositoryTest extends TestCase
     private const TABLE_AUTO = 'test_auto_pk';
     private const TABLE_INT = 'test_integer_pk';
     private const TABLE_STR = 'test_string_pk';
+    private const TABLE_UNIQUE = 'test_unique_violation';
     private const PK = 'id';
 
     private static ConnectionPoolInterface $pool;
@@ -46,6 +48,16 @@ final class RepositoryTest extends TestCase
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_AUTO);
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_INT);
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_STR);
+        self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_UNIQUE);
+
+        self::$pdo->exec('
+            CREATE TABLE ' . self::TABLE_UNIQUE . ' (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                email VARCHAR(255) NOT NULL,
+                UNIQUE KEY uniq_email (email)
+            )
+        ');
 
         self::$pdo->exec('
             CREATE TABLE ' . self::TABLE_AUTO . ' (
@@ -77,6 +89,7 @@ final class RepositoryTest extends TestCase
         self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_AUTO);
         self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_INT);
         self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_STR);
+        self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_UNIQUE);
 
         $this->repository = new Repository(self::$pool);
     }
@@ -86,6 +99,7 @@ final class RepositoryTest extends TestCase
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_AUTO);
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_INT);
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_STR);
+        self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_UNIQUE);
     }
 
     // ── INSERT ──────────────────────────────────────────────────────
@@ -516,5 +530,82 @@ final class RepositoryTest extends TestCase
 
         $row = $repositoryA->findById(self::TABLE_AUTO, self::PK, $id);
         $this->assertSame(150, $row['age']);
+    }
+
+    // ── UNIQUE VIOLATION ──────────────────────────────────────────────
+
+    public function testAutoincrementDuplicateThrowsUniqueViolation(): void
+    {
+        $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Alice', 'email' => 'a@x.de']);
+
+        try {
+            $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Bob', 'email' => 'a@x.de']);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertNotNull($e->getConstraint());
+            $this->assertStringContainsString('uniq_email', (string) $e->getConstraint());
+        }
+    }
+
+    public function testProvidedPkDuplicateThrowsUniqueViolation(): void
+    {
+        $this->repository->insert(
+            self::TABLE_UNIQUE,
+            self::PK,
+            ['id' => 10, 'name' => 'Alice', 'email' => 'a@x.de'],
+            PkStrategy::NONE,
+        );
+
+        try {
+            $this->repository->insert(
+                self::TABLE_UNIQUE,
+                self::PK,
+                ['id' => 11, 'name' => 'Bob', 'email' => 'a@x.de'],
+                PkStrategy::NONE,
+            );
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertNotNull($e->getConstraint());
+        }
+    }
+
+    public function testIntegerPkForeignUniqueViolationThrowsWithoutRetry(): void
+    {
+        $this->repository->insert(
+            self::TABLE_UNIQUE,
+            self::PK,
+            ['name' => 'Alice', 'email' => 'a@x.de'],
+            PkStrategy::INTEGER,
+        );
+
+        try {
+            $this->repository->insert(
+                self::TABLE_UNIQUE,
+                self::PK,
+                ['name' => 'Bob', 'email' => 'a@x.de'],
+                PkStrategy::INTEGER,
+            );
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertNotNull($e->getConstraint());
+        }
+
+        // A single attempt: the next successful insert gets MAX+1, no gap / no repeated draws.
+        $next = $this->repository->insert(
+            self::TABLE_UNIQUE,
+            self::PK,
+            ['name' => 'Carol', 'email' => 'c@x.de'],
+            PkStrategy::INTEGER,
+        );
+        $this->assertSame(2, (int) $next);
+    }
+
+    public function testUpdateOntoForeignUniqueValueThrowsUniqueViolation(): void
+    {
+        $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Alice', 'email' => 'a@x.de']);
+        $id = $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Bob', 'email' => 'b@x.de']);
+
+        $this->expectException(UniqueViolationException::class);
+        $this->repository->update(self::TABLE_UNIQUE, self::PK, $id, ['email' => 'a@x.de']);
     }
 }

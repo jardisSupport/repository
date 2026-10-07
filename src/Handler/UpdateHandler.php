@@ -7,6 +7,7 @@ namespace JardisSupport\Repository\Handler;
 use Closure;
 use JardisSupport\Contract\DbQuery\DbPreparedQueryInterface;
 use JardisSupport\Contract\Repository\Exception\PersistException;
+use JardisSupport\Contract\Repository\Exception\UniqueViolationException;
 use JardisSupport\DbQuery\DbUpdate;
 use JardisSupport\Repository\Handler\Query\ApplyExpectedConditions;
 use PDOException;
@@ -17,10 +18,12 @@ use PDOException;
 final class UpdateHandler
 {
     private readonly Closure $applyExpectedConditions;
+    private readonly DetectUniqueViolation $detectUniqueViolation;
 
     public function __construct(
         private readonly QueryExecutor $executor,
     ) {
+        $this->detectUniqueViolation = new DetectUniqueViolation();
         $this->applyExpectedConditions = (new ApplyExpectedConditions())->__invoke(...);
     }
 
@@ -60,6 +63,15 @@ final class UpdateHandler
         try {
             $stmt = $this->executor->execute($prepared);
         } catch (PDOException $e) {
+            $constraint = ($this->detectUniqueViolation)($e, $this->executor->getDialect());
+            if ($constraint !== null) {
+                throw new UniqueViolationException(
+                    'Unique violation on ' . $table . ': ' . $e->getMessage(),
+                    $constraint ?: null,
+                    $e
+                );
+            }
+
             throw new PersistException(
                 'Update failed for ' . $table . ': ' . $e->getMessage(),
                 0,
