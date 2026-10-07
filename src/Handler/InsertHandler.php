@@ -6,6 +6,7 @@ namespace JardisSupport\Repository\Handler;
 
 use JardisSupport\Contract\DbQuery\DbPreparedQueryInterface;
 use JardisSupport\Contract\Repository\Exception\PersistException;
+use JardisSupport\Contract\Repository\Exception\UniqueViolationException;
 use JardisSupport\DbQuery\DbInsert;
 use JardisSupport\Contract\Repository\PrimaryKey\PkStrategy;
 use PDOException;
@@ -16,10 +17,12 @@ use PDOException;
 final class InsertHandler
 {
     private readonly IntegerPkGenerator $integerPkGenerator;
+    private readonly DetectUniqueViolation $detectUniqueViolation;
 
     public function __construct(
         private readonly QueryExecutor $executor,
     ) {
+        $this->detectUniqueViolation = new DetectUniqueViolation();
         $this->integerPkGenerator = new IntegerPkGenerator();
     }
 
@@ -29,6 +32,8 @@ final class InsertHandler
      * @param array<string, mixed> $values Spaltenwerte
      * @param PkStrategy $pkStrategy Strategie fuer PK-Erzeugung
      * @return int|string Erzeugter Primary Key
+     * @throws UniqueViolationException bei Verletzung eines Unique-Constraints
+     * @throws PersistException bei sonstigen Persistierungsfehlern
      */
     public function __invoke(
         string $table,
@@ -58,7 +63,11 @@ final class InsertHandler
             ->sql($this->executor->getDialect(), prepared: true);
         \assert($prepared instanceof DbPreparedQueryInterface);
 
-        $this->executor->fetchAll($prepared);
+        try {
+            $this->executor->fetchAll($prepared);
+        } catch (PDOException $e) {
+            throw $this->translate($e, $table);
+        }
 
         return (int) $this->executor->getPdo()->lastInsertId();
     }
@@ -90,12 +99,11 @@ final class InsertHandler
 
                 return $pk;
             } catch (PDOException $e) {
-                if (!$this->isDuplicateKeyError($e) || $attempt === 3) {
-                    throw new PersistException(
-                        'Insert failed for ' . $table . ': ' . $e->getMessage(),
-                        0,
-                        $e
-                    );
+                $translated = $this->translate($e, $table);
+                $retry = $translated instanceof UniqueViolationException
+                    && $this->isPrimaryKeyViolation($translated->getConstraint(), $dialect, $table, $pkColumn);
+                if (!$retry || $attempt === 3) {
+                    throw $translated;
                 }
             }
         }
@@ -127,15 +135,41 @@ final class InsertHandler
             ->sql($this->executor->getDialect(), prepared: true);
         \assert($prepared instanceof DbPreparedQueryInterface);
 
-        $this->executor->fetchAll($prepared);
+        try {
+            $this->executor->fetchAll($prepared);
+        } catch (PDOException $e) {
+            throw $this->translate($e, $table);
+        }
 
         return $pk;
     }
 
-    private function isDuplicateKeyError(PDOException $e): bool
+    private function translate(PDOException $e, string $table): PersistException
     {
-        return $e->getCode() === '23000'
-            || str_contains($e->getMessage(), 'Duplicate')
-            || str_contains($e->getMessage(), 'UNIQUE constraint failed');
+        $constraint = ($this->detectUniqueViolation)($e, $this->executor->getDialect());
+
+        if ($constraint !== null) {
+            return new UniqueViolationException(
+                'Unique violation on ' . $table . ': ' . $e->getMessage(),
+                $constraint ?: null,
+                $e
+            );
+        }
+
+        return new PersistException('Insert failed for ' . $table . ': ' . $e->getMessage(), 0, $e);
+    }
+
+    private function isPrimaryKeyViolation(?string $constraint, string $dialect, string $table, string $pkColumn): bool
+    {
+        if ($constraint === null) {
+            return false;
+        }
+
+        return match ($dialect) {
+            'mysql', 'mariadb' => $constraint === 'PRIMARY',
+            'postgres' => str_ends_with($constraint, '_pkey'),
+            'sqlite' => $constraint === $table . '.' . $pkColumn,
+            default => false,
+        };
     }
 }

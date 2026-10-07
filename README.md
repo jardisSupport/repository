@@ -127,6 +127,20 @@ $repository->update('orders', 'id', $id, ['status' => 'cancelled'], ['status' =>
 > - An empty `$values` combined with a non-empty `$expected` throws `InvalidArgumentException` too — the existing "nothing to write" shortcut would otherwise skip the check silently and return `true` unchecked. Use `exists()`/`findById()` for a pure read-side check.
 > - **MySQL note:** `rowCount()` counts changed rows — an update that would set identical values reports `0`. This doesn't fire for repositories built from changed-field diffs, but it's a caveat if `$values` is assembled differently.
 
+### Error handling
+
+Write failures surface as `PersistException`. A violated unique constraint (duplicate key) is reported as its subtype `UniqueViolationException`, with the constraint name available via `getConstraint()` (or `null` if the driver does not expose it). Detection is dialect-aware (MySQL/MariaDB, PostgreSQL, SQLite); other integrity errors such as foreign-key violations stay plain `PersistException`. With `PkStrategy::INTEGER`, a collision is only retried when the primary key itself collided — any other unique violation is thrown immediately.
+
+```php
+use JardisSupport\Contract\Repository\Exception\UniqueViolationException;
+
+try {
+    $repository->insert('users', 'id', ['email' => $email]);
+} catch (UniqueViolationException $e) {
+    // e.g. respond with HTTP 409 Conflict; $e->getConstraint() names the violated index
+}
+```
+
 ## Documentation
 
 Full documentation, guides, and API reference:
