@@ -7,6 +7,8 @@ namespace JardisSupport\Repository\Tests\Integration;
 use JardisAdapter\DbConnection\ConnectionPool;
 use JardisAdapter\DbConnection\Factory\ConnectionFactory;
 use JardisSupport\Contract\DbConnection\ConnectionPoolInterface;
+use JardisSupport\Contract\Repository\Exception\UniqueViolationException;
+use JardisSupport\Contract\Repository\PrimaryKey\PkStrategy;
 use JardisSupport\Repository\Repository;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -19,10 +21,12 @@ use PHPUnit\Framework\TestCase;
 final class RepositoryPostgresTest extends TestCase
 {
     private const TABLE = 'test_conditional_write';
+    private const TABLE_UNIQUE = 'test_unique_violation';
     private const PK = 'id';
 
     private static ConnectionPoolInterface $pool;
     private static PDO $pdo;
+    private Repository $repository;
 
     public static function setUpBeforeClass(): void
     {
@@ -42,6 +46,16 @@ final class RepositoryPostgresTest extends TestCase
 
         self::$pdo = self::$pool->getWriter()->pdo();
 
+        self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_UNIQUE);
+        self::$pdo->exec('
+            CREATE TABLE ' . self::TABLE_UNIQUE . ' (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                email VARCHAR(255) NOT NULL,
+                CONSTRAINT uniq_email UNIQUE (email)
+            )
+        ');
+
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE);
         self::$pdo->exec('
             CREATE TABLE ' . self::TABLE . ' (
@@ -55,11 +69,14 @@ final class RepositoryPostgresTest extends TestCase
     protected function setUp(): void
     {
         self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE . ' RESTART IDENTITY');
+        self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_UNIQUE . ' RESTART IDENTITY');
+        $this->repository = new Repository(self::$pool);
     }
 
     public static function tearDownAfterClass(): void
     {
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE);
+        self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_UNIQUE);
     }
 
     public function testConditionalUpdateCollisionScenario(): void
@@ -86,5 +103,82 @@ final class RepositoryPostgresTest extends TestCase
 
         $row = $repositoryA->findById(self::TABLE, self::PK, $id);
         $this->assertSame(150, (int) $row['age']);
+    }
+
+    // ── UNIQUE VIOLATION ──────────────────────────────────────────────
+
+    public function testAutoincrementDuplicateThrowsUniqueViolation(): void
+    {
+        $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Alice', 'email' => 'a@x.de']);
+
+        try {
+            $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Bob', 'email' => 'a@x.de']);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertNotNull($e->getConstraint());
+            $this->assertStringContainsString('uniq_email', (string) $e->getConstraint());
+        }
+    }
+
+    public function testProvidedPkDuplicateThrowsUniqueViolation(): void
+    {
+        $this->repository->insert(
+            self::TABLE_UNIQUE,
+            self::PK,
+            ['id' => 10, 'name' => 'Alice', 'email' => 'a@x.de'],
+            PkStrategy::NONE,
+        );
+
+        try {
+            $this->repository->insert(
+                self::TABLE_UNIQUE,
+                self::PK,
+                ['id' => 11, 'name' => 'Bob', 'email' => 'a@x.de'],
+                PkStrategy::NONE,
+            );
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertNotNull($e->getConstraint());
+        }
+    }
+
+    public function testIntegerPkForeignUniqueViolationThrowsWithoutRetry(): void
+    {
+        $this->repository->insert(
+            self::TABLE_UNIQUE,
+            self::PK,
+            ['name' => 'Alice', 'email' => 'a@x.de'],
+            PkStrategy::INTEGER,
+        );
+
+        try {
+            $this->repository->insert(
+                self::TABLE_UNIQUE,
+                self::PK,
+                ['name' => 'Bob', 'email' => 'a@x.de'],
+                PkStrategy::INTEGER,
+            );
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertNotNull($e->getConstraint());
+        }
+
+        // A single attempt: the next successful insert gets MAX+1, no gap / no repeated draws.
+        $next = $this->repository->insert(
+            self::TABLE_UNIQUE,
+            self::PK,
+            ['name' => 'Carol', 'email' => 'c@x.de'],
+            PkStrategy::INTEGER,
+        );
+        $this->assertSame(2, (int) $next);
+    }
+
+    public function testUpdateOntoForeignUniqueValueThrowsUniqueViolation(): void
+    {
+        $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Alice', 'email' => 'a@x.de']);
+        $id = $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Bob', 'email' => 'b@x.de']);
+
+        $this->expectException(UniqueViolationException::class);
+        $this->repository->update(self::TABLE_UNIQUE, self::PK, $id, ['email' => 'a@x.de']);
     }
 }
