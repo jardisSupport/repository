@@ -8,6 +8,7 @@ use JardisSupport\Contract\DbConnection\ConnectionPoolInterface;
 use JardisSupport\Contract\DbQuery\DbPreparedQueryInterface;
 use JardisSupport\Contract\DbQuery\DbQueryBuilderInterface;
 use JardisSupport\Contract\Repository\Exception\PersistException;
+use JardisSupport\Contract\Repository\Exception\TransientConflictException;
 use JardisSupport\Contract\Repository\Exception\UniqueViolationException;
 use JardisSupport\Contract\Repository\PrimaryKey\PkStrategy;
 use JardisSupport\Contract\Repository\RepositoryInterface;
@@ -49,6 +50,7 @@ final class Repository implements RepositoryInterface
     /**
      * @param array<string, mixed> $values
      * @throws UniqueViolationException bei Verletzung eines Unique-Constraints
+     * @throws TransientConflictException bei Snapshot-/Serialisierungskonflikt oder Deadlock
      * @throws PersistException bei sonstigen Persistierungsfehlern
      */
     public function insert(
@@ -66,6 +68,7 @@ final class Repository implements RepositoryInterface
      * @param array<string, mixed> $values
      * @param array<string, scalar|null> $expected Spalte => erwarteter Wert; null => IS NULL
      * @throws UniqueViolationException bei Verletzung eines Unique-Constraints
+     * @throws TransientConflictException bei Snapshot-/Serialisierungskonflikt oder Deadlock
      * @throws PersistException bei sonstigen Persistierungsfehlern
      */
     public function update(

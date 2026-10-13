@@ -130,7 +130,7 @@ $repository->update('orders', 'id', $id, ['status' => 'cancelled'], ['status' =>
 
 ### Error handling
 
-Write failures surface as `PersistException`. A violated unique constraint (duplicate key) is reported as its subtype `UniqueViolationException`, with the constraint name available via `getConstraint()` (or `null` if the driver does not expose it). Detection is dialect-aware (MySQL/MariaDB, PostgreSQL, SQLite); other integrity errors such as foreign-key violations stay plain `PersistException`. With `PkStrategy::INTEGER`, a collision is only retried when the primary key itself collided — any other unique violation is thrown immediately.
+Write failures surface as `PersistException`. A transient concurrency conflict (snapshot conflict, deadlock) is reported as its subtype `TransientConflictException`, see below. A violated unique constraint (duplicate key) is reported as its subtype `UniqueViolationException`, with the constraint name available via `getConstraint()` (or `null` if the driver does not expose it). Detection is dialect-aware (MySQL/MariaDB, PostgreSQL, SQLite); other integrity errors such as foreign-key violations stay plain `PersistException`. With `PkStrategy::INTEGER`, a collision is only retried when the primary key itself collided — any other unique violation is thrown immediately.
 
 ```php
 use JardisSupport\Contract\Repository\Exception\UniqueViolationException;
@@ -155,6 +155,35 @@ try {
 | SQLite | message `UNIQUE constraint failed: t.a, t.b` | `t.` prefix removed; also for the primary key; `index '...'` (expression index) -> `[]` |
 
 The integration tests run against MySQL, **MariaDB** and PostgreSQL (`make start` brings up all three services, see `support/docker-compose.yml`) plus SQLite in-process, each with a single-column and a two-column unique index.
+
+#### Transient conflicts (`TransientConflictException`)
+
+(contracts >= 2.6, repository >= 1.6) Every write — `insert()` (all `PkStrategy` values), `update()`, `delete()`, `deleteAll()` — throws `TransientConflictException` (subtype of `PersistException`) when the database rejects the statement because of a **snapshot/serialization conflict or a deadlock**: the statement was not wrong, another transaction got in between. Catch it **before** `PersistException`; the unique-violation path is unchanged.
+
+| Dialect | Detected | Meaning |
+|---------|----------|---------|
+| MySQL / MariaDB | driver code `1020` | row changed since the snapshot (`innodb_snapshot_isolation`, MariaDB default since 11.6) — ER_CHECKREAD, SQLSTATE `HY000` |
+| MySQL / MariaDB | driver code `1213` | deadlock, the transaction was rolled back |
+| PostgreSQL | SQLSTATE `40001` | serialization failure (REPEATABLE READ / SERIALIZABLE) |
+| PostgreSQL | SQLSTATE `40P01` | deadlock detected |
+| SQLite | none | `SQLITE_BUSY` is a lock-availability error and stays `PersistException` |
+
+Not detected on purpose: MySQL/MariaDB `1205` (lock wait timeout) — it rolls back only the statement and says "waited too long", not "conflict resolved by the database"; it stays a `PersistException`.
+
+`getDriverCode()` carries the code as text (`'1020'`, `'1213'`, `'40001'`, `'40P01'`), `getPrevious()` the `PDOException`. **Recommended reaction: roll back and repeat the whole unit of work in a NEW transaction** — repeating only the failed statement inside the same transaction does not help (PostgreSQL has already aborted it; under snapshot isolation the old snapshot still conflicts). For HTTP this maps to `409 Conflict` (retryable), not `500`.
+
+```php
+use JardisSupport\Contract\Repository\Exception\TransientConflictException;
+
+try {
+    $repository->update('orders', 'id', $id, ['status' => 'paid'], ['status' => 'open']);
+} catch (TransientConflictException $e) {
+    $e->getDriverCode(); // '1020' | '1213' | '40001' | '40P01'
+    // roll back, then repeat the whole unit of work in a new transaction
+}
+```
+
+The integration tests reproduce the conflicts for real: MariaDB 11.8 with snapshot isolation (two connections, `START TRANSACTION WITH CONSISTENT SNAPSHOT`), PostgreSQL REPEATABLE READ (`40001`) and a deadlock between the test session and a peer process (`40P01`, for insert, update, delete and deleteAll).
 
 ## Documentation
 
