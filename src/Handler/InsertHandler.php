@@ -18,11 +18,13 @@ final class InsertHandler
 {
     private readonly IntegerPkGenerator $integerPkGenerator;
     private readonly DetectUniqueViolation $detectUniqueViolation;
+    private readonly ResolveViolatedColumns $resolveViolatedColumns;
 
     public function __construct(
         private readonly QueryExecutor $executor,
     ) {
         $this->detectUniqueViolation = new DetectUniqueViolation();
+        $this->resolveViolatedColumns = new ResolveViolatedColumns();
         $this->integerPkGenerator = new IntegerPkGenerator();
     }
 
@@ -152,7 +154,15 @@ final class InsertHandler
             return new UniqueViolationException(
                 'Unique violation on ' . $table . ': ' . $e->getMessage(),
                 $constraint ?: null,
-                $e
+                $e,
+                ($this->resolveViolatedColumns)(
+                    $e,
+                    $this->executor->getDialect(),
+                    $table,
+                    $this->executor->getPdo(),
+                    $constraint
+                ),
+                $table
             );
         }
 
