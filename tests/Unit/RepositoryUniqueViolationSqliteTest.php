@@ -28,6 +28,10 @@ final class RepositoryUniqueViolationSqliteTest extends TestCase
         $this->pdo->exec('CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL)');
         $this->pdo->exec('CREATE UNIQUE INDEX uniq_email ON users (email)');
         $this->pdo->exec('CREATE TABLE manual (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE)');
+        $this->pdo->exec(
+            'CREATE TABLE pairs (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, '
+            . 'number INTEGER NOT NULL, UNIQUE (tenant_id, number))'
+        );
         $this->pdo->exec('PRAGMA foreign_keys = ON');
         $this->pdo->exec('CREATE TABLE parents (id INTEGER PRIMARY KEY)');
         $this->pdo->exec(
@@ -90,6 +94,70 @@ final class RepositoryUniqueViolationSqliteTest extends TestCase
             $this->fail('PersistException expected');
         } catch (PersistException $e) {
             $this->assertNotInstanceOf(UniqueViolationException::class, $e);
+        }
+    }
+
+    public function testInsertViolationCarriesSingleColumnAndTable(): void
+    {
+        $this->repository->insert('users', 'id', ['email' => 'a@x.de']);
+
+        try {
+            $this->repository->insert('users', 'id', ['email' => 'a@x.de']);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['email'], $e->getColumns());
+            $this->assertSame('users', $e->getTable());
+            $this->assertInstanceOf(\PDOException::class, $e->getPrevious());
+        }
+    }
+
+    public function testInsertViolationCarriesCompleteTwoColumnIndexInOrder(): void
+    {
+        $this->repository->insert('pairs', 'id', ['tenant_id' => 1, 'number' => 7]);
+
+        try {
+            $this->repository->insert('pairs', 'id', ['tenant_id' => 1, 'number' => 7]);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['tenant_id', 'number'], $e->getColumns());
+            $this->assertSame('pairs', $e->getTable());
+        }
+    }
+
+    public function testUpdateViolationCarriesColumnsAndTable(): void
+    {
+        $this->repository->insert('pairs', 'id', ['tenant_id' => 1, 'number' => 7]);
+        $id = $this->repository->insert('pairs', 'id', ['tenant_id' => 1, 'number' => 8]);
+
+        try {
+            $this->repository->update('pairs', 'id', $id, ['number' => 7]);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['tenant_id', 'number'], $e->getColumns());
+            $this->assertSame('pairs', $e->getTable());
+        }
+
+        $this->repository->insert('users', 'id', ['email' => 'a@x.de']);
+        $other = $this->repository->insert('users', 'id', ['email' => 'b@x.de']);
+        try {
+            $this->repository->update('users', 'id', $other, ['email' => 'a@x.de']);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['email'], $e->getColumns());
+            $this->assertSame('users', $e->getTable());
+        }
+    }
+
+    public function testPrimaryKeyViolationCarriesPkColumn(): void
+    {
+        $this->repository->insert('manual', 'id', ['id' => 1, 'email' => 'a@x.de'], PkStrategy::NONE);
+
+        try {
+            $this->repository->insert('manual', 'id', ['id' => 1, 'email' => 'b@x.de'], PkStrategy::NONE);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['id'], $e->getColumns());
+            $this->assertSame('manual', $e->getTable());
         }
     }
 }

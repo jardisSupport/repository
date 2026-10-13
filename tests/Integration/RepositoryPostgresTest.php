@@ -22,6 +22,8 @@ final class RepositoryPostgresTest extends TestCase
 {
     private const TABLE = 'test_conditional_write';
     private const TABLE_UNIQUE = 'test_unique_violation';
+    private const TABLE_PAIR = 'test_unique_pair';
+    private const TABLE_EXPR = 'test_unique_expression';
     private const PK = 'id';
 
     private static ConnectionPoolInterface $pool;
@@ -45,6 +47,28 @@ final class RepositoryPostgresTest extends TestCase
         );
 
         self::$pdo = self::$pool->getWriter()->pdo();
+
+        self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_PAIR);
+        self::$pdo->exec('
+            CREATE TABLE ' . self::TABLE_PAIR . ' (
+                id SERIAL PRIMARY KEY,
+                tenant_id INT NOT NULL,
+                number INT NOT NULL,
+                CONSTRAINT uq_pair UNIQUE (tenant_id, number)
+            )
+        ');
+
+        self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_EXPR);
+        self::$pdo->exec('
+            CREATE TABLE ' . self::TABLE_EXPR . ' (
+                id SERIAL PRIMARY KEY,
+                tenant_id INT NOT NULL,
+                email VARCHAR(255) NOT NULL
+            )
+        ');
+        self::$pdo->exec(
+            'CREATE UNIQUE INDEX uq_expr ON ' . self::TABLE_EXPR . ' (tenant_id, lower(email))'
+        );
 
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_UNIQUE);
         self::$pdo->exec('
@@ -70,6 +94,8 @@ final class RepositoryPostgresTest extends TestCase
     {
         self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE . ' RESTART IDENTITY');
         self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_UNIQUE . ' RESTART IDENTITY');
+        self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_PAIR . ' RESTART IDENTITY');
+        self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_EXPR . ' RESTART IDENTITY');
         $this->repository = new Repository(self::$pool);
     }
 
@@ -77,6 +103,8 @@ final class RepositoryPostgresTest extends TestCase
     {
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE);
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_UNIQUE);
+        self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_PAIR);
+        self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_EXPR);
     }
 
     public function testConditionalUpdateCollisionScenario(): void
@@ -180,5 +208,93 @@ final class RepositoryPostgresTest extends TestCase
 
         $this->expectException(UniqueViolationException::class);
         $this->repository->update(self::TABLE_UNIQUE, self::PK, $id, ['email' => 'a@x.de']);
+    }
+
+    // ── UNIQUE VIOLATION: columns + table ─────────────────────────────
+
+    public function testInsertViolationCarriesSingleColumnAndTable(): void
+    {
+        $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Alice', 'email' => 'a@x.de']);
+
+        try {
+            $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Bob', 'email' => 'a@x.de']);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['email'], $e->getColumns());
+            $this->assertSame(self::TABLE_UNIQUE, $e->getTable());
+            $this->assertSame('uniq_email', $e->getConstraint());
+            $this->assertInstanceOf(\PDOException::class, $e->getPrevious());
+        }
+    }
+
+    public function testInsertViolationCarriesCompleteTwoColumnIndexInOrder(): void
+    {
+        $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 7]);
+
+        try {
+            $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 7]);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['tenant_id', 'number'], $e->getColumns());
+            $this->assertSame(self::TABLE_PAIR, $e->getTable());
+        }
+    }
+
+    public function testUpdateViolationCarriesColumnsAndTable(): void
+    {
+        $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 7]);
+        $id = $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 8]);
+
+        try {
+            $this->repository->update(self::TABLE_PAIR, self::PK, $id, ['number' => 7]);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['tenant_id', 'number'], $e->getColumns());
+            $this->assertSame(self::TABLE_PAIR, $e->getTable());
+        }
+
+        $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Alice', 'email' => 'a@x.de']);
+        $other = $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Bob', 'email' => 'b@x.de']);
+        try {
+            $this->repository->update(self::TABLE_UNIQUE, self::PK, $other, ['email' => 'a@x.de']);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['email'], $e->getColumns());
+        }
+    }
+
+    public function testExpressionIndexYieldsEmptyColumnsNotPartialList(): void
+    {
+        $this->repository->insert(self::TABLE_EXPR, self::PK, ['tenant_id' => 1, 'email' => 'A@x.de']);
+
+        try {
+            $this->repository->insert(self::TABLE_EXPR, self::PK, ['tenant_id' => 1, 'email' => 'a@X.de']);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame('uq_expr', $e->getConstraint());
+            $this->assertSame([], $e->getColumns());
+            $this->assertSame(self::TABLE_EXPR, $e->getTable());
+        }
+    }
+
+    public function testColumnsAreFilledInsideTransactionWhichPostgresAborts(): void
+    {
+        self::$pdo->beginTransaction();
+        try {
+            $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 7]);
+
+            try {
+                $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 7]);
+                $this->fail('UniqueViolationException expected');
+            } catch (UniqueViolationException $e) {
+                // no lookup needed: the aborted transaction (25P02) must not matter
+                $this->assertSame(['tenant_id', 'number'], $e->getColumns());
+                $this->assertSame(self::TABLE_PAIR, $e->getTable());
+            }
+        } finally {
+            if (self::$pdo->inTransaction()) {
+                self::$pdo->rollBack();
+            }
+        }
     }
 }

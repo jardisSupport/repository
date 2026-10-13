@@ -19,11 +19,13 @@ final class UpdateHandler
 {
     private readonly Closure $applyExpectedConditions;
     private readonly DetectUniqueViolation $detectUniqueViolation;
+    private readonly ResolveViolatedColumns $resolveViolatedColumns;
 
     public function __construct(
         private readonly QueryExecutor $executor,
     ) {
         $this->detectUniqueViolation = new DetectUniqueViolation();
+        $this->resolveViolatedColumns = new ResolveViolatedColumns();
         $this->applyExpectedConditions = (new ApplyExpectedConditions())->__invoke(...);
     }
 
@@ -68,7 +70,15 @@ final class UpdateHandler
                 throw new UniqueViolationException(
                     'Unique violation on ' . $table . ': ' . $e->getMessage(),
                     $constraint ?: null,
-                    $e
+                    $e,
+                    ($this->resolveViolatedColumns)(
+                        $e,
+                        $this->executor->getDialect(),
+                        $table,
+                        $this->executor->getPdo(),
+                        $constraint
+                    ),
+                    $table
                 );
             }
 
