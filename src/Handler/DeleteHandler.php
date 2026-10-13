@@ -17,10 +17,12 @@ use PDOException;
 final class DeleteHandler
 {
     private readonly Closure $applyExpectedConditions;
+    private readonly TranslateTransientConflict $translateTransientConflict;
 
     public function __construct(
         private readonly QueryExecutor $executor,
     ) {
+        $this->translateTransientConflict = new TranslateTransientConflict();
         $this->applyExpectedConditions = (new ApplyExpectedConditions())->__invoke(...);
     }
 
@@ -47,6 +49,11 @@ final class DeleteHandler
         try {
             $stmt = $this->executor->execute($prepared);
         } catch (PDOException $e) {
+            $transient = ($this->translateTransientConflict)($e, $this->executor->getDialect(), $table);
+            if ($transient !== null) {
+                throw $transient;
+            }
+
             throw new PersistException(
                 'Delete failed for ' . $table . ': ' . $e->getMessage(),
                 0,

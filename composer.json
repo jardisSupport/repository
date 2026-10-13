@@ -14,7 +14,7 @@
     ],
     "require": {
         "php": ">=8.2",
-        "jardissupport/contracts": "^2.5",
+        "jardissupport/contracts": "^2.6",
         "jardissupport/dbquery": "^1.0",
         "ext-pdo": "*"
     },
