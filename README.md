@@ -139,8 +139,22 @@ try {
     $repository->insert('users', 'id', ['email' => $email]);
 } catch (UniqueViolationException $e) {
     // e.g. respond with HTTP 409 Conflict; $e->getConstraint() names the violated index
+    $e->getTable();   // table of the failed insert/update (from the call, never parsed from the message)
+    $e->getColumns(); // complete column list of the violated index, in index order, or []
 }
 ```
+
+#### Which columns were violated
+
+`getColumns()` (contracts >= 2.5) carries the **complete** column list of the violated unique index in index order — or `[]` when the dialect cannot deliver it safely. It is **never a partial list**, and resolving it never hides the violation: `getMessage()`, `getConstraint()` and `getPrevious()` are always set. It is resolved only on the error path, for `insert()` (all `PkStrategy` values) and `update()`.
+
+| Dialect | Source of the columns | Notes |
+|---------|-----------------------|-------|
+| MySQL / MariaDB | index name from error 1062 (`for key`), then `information_schema.STATISTICS` (`ORDER BY SEQ_IN_INDEX`) | one lookup per (table, index), cached; the transaction stays usable after 1062; lookup error or functional (expression) index -> `[]`; the primary key resolves as `PRIMARY` |
+| PostgreSQL | DETAIL line `Key (a, b)=(...)` of the error, no extra query | works inside an aborted transaction (25P02) and with translated server messages; quoted identifiers are unquoted; expression index -> `[]` |
+| SQLite | message `UNIQUE constraint failed: t.a, t.b` | `t.` prefix removed; also for the primary key; `index '...'` (expression index) -> `[]` |
+
+The integration tests run against MySQL, **MariaDB** and PostgreSQL (`make start` brings up all three services, see `support/docker-compose.yml`) plus SQLite in-process, each with a single-column and a two-column unique index.
 
 ## Documentation
 

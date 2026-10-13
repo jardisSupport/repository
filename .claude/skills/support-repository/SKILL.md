@@ -77,6 +77,16 @@ use JardisSupport\Contract\Repository\Exception\{PersistException, RecordNotFoun
 | Update/Delete/DeleteAll: `PDOException` | `PersistException` |
 | `$expected` non-scalar value, or empty `$values` with non-empty `$expected` | `InvalidArgumentException` |
 | Duplicate Key detection | MySQL/Postgres SQLSTATE `23000`; SQLite string match `UNIQUE constraint failed` |
+| `UniqueViolationException` (subtype of `PersistException`, v1.5.0, needs contracts >= 2.5) | Insert (all `PkStrategy`) and `update()`: `getConstraint()`, `getTable()` (= `$table` of the call), `getColumns()` = COMPLETE column list of the violated index in index order, or `[]` — never a partial list (see below); `getPrevious()` = the `PDOException` |
+
+### UNIQUE VIOLATION COLUMNS (`Handler/ResolveViolatedColumns`)
+| Dialect | Source | Fallback `[]` |
+|---------|--------|---------------|
+| MySQL/MariaDB | 1062 `for key` -> `information_schema.STATISTICS` (`TABLE_SCHEMA=DATABASE()`, `ORDER BY SEQ_IN_INDEX`), cached per (table, index); transaction stays usable | lookup error, unreadable index name, functional index |
+| Postgres | DETAIL `Key (a, b)=(...)` of the error text (no lookup — transaction is aborted after 23505), quoted names unquoted | expression index, unparsable token |
+| SQLite | `UNIQUE constraint failed: t.a, t.b`, table prefix removed (PK included) | `index '...'` form |
+- Resolving never throws and never hides the violation (`message`/`constraint`/`previous` always set).
+- Tests: Unit `ResolveViolatedColumnsTest`, SQLite unit, integration MySQL + **MariaDB** + Postgres (single + two-column index, insert + update).
 | Parameter binding (v1.2.0+) | `Handler/BindTypedParameters` binds each value via `bindValue()` with `PDO::PARAM_BOOL`/`PARAM_INT`/`PARAM_NULL`/`PARAM_STR` — `false` reaches Postgres as BOOLEAN, not `''`. **< v1.2.0:** `execute($bindings)` bound everything as string → Postgres `SQLSTATE[22P02] invalid input syntax for type boolean: ""`; there, bind bools as int 0/1 yourself. |
 | `RecordNotFoundException` | Defined in contract — not thrown internally; for custom implementations |
 

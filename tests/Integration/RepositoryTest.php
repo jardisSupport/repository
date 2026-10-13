@@ -21,6 +21,7 @@ final class RepositoryTest extends TestCase
     private const TABLE_INT = 'test_integer_pk';
     private const TABLE_STR = 'test_string_pk';
     private const TABLE_UNIQUE = 'test_unique_violation';
+    private const TABLE_PAIR = 'test_unique_pair';
     private const PK = 'id';
 
     private static ConnectionPoolInterface $pool;
@@ -49,6 +50,16 @@ final class RepositoryTest extends TestCase
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_INT);
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_STR);
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_UNIQUE);
+        self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_PAIR);
+
+        self::$pdo->exec('
+            CREATE TABLE ' . self::TABLE_PAIR . ' (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                tenant_id INT NOT NULL,
+                number INT NOT NULL,
+                UNIQUE KEY uq_pair (tenant_id, number)
+            )
+        ');
 
         self::$pdo->exec('
             CREATE TABLE ' . self::TABLE_UNIQUE . ' (
@@ -90,6 +101,7 @@ final class RepositoryTest extends TestCase
         self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_INT);
         self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_STR);
         self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_UNIQUE);
+        self::$pdo->exec('TRUNCATE TABLE ' . self::TABLE_PAIR);
 
         $this->repository = new Repository(self::$pool);
     }
@@ -100,6 +112,7 @@ final class RepositoryTest extends TestCase
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_INT);
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_STR);
         self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_UNIQUE);
+        self::$pdo->exec('DROP TABLE IF EXISTS ' . self::TABLE_PAIR);
     }
 
     // ── INSERT ──────────────────────────────────────────────────────
@@ -607,5 +620,111 @@ final class RepositoryTest extends TestCase
 
         $this->expectException(UniqueViolationException::class);
         $this->repository->update(self::TABLE_UNIQUE, self::PK, $id, ['email' => 'a@x.de']);
+    }
+
+    // ── UNIQUE VIOLATION: columns + table ─────────────────────────────
+
+    public function testInsertViolationCarriesSingleColumnAndTable(): void
+    {
+        $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Alice', 'email' => 'a@x.de']);
+
+        try {
+            $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Bob', 'email' => 'a@x.de']);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['email'], $e->getColumns());
+            $this->assertSame(self::TABLE_UNIQUE, $e->getTable());
+            $this->assertSame('uniq_email', $e->getConstraint());
+            $this->assertInstanceOf(\PDOException::class, $e->getPrevious());
+        }
+    }
+
+    public function testInsertViolationCarriesCompleteTwoColumnIndexInOrder(): void
+    {
+        $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 7]);
+
+        try {
+            $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 7]);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['tenant_id', 'number'], $e->getColumns());
+            $this->assertSame(self::TABLE_PAIR, $e->getTable());
+        }
+    }
+
+    public function testUpdateViolationCarriesColumnsAndTable(): void
+    {
+        $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 7]);
+        $id = $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 8]);
+
+        try {
+            $this->repository->update(self::TABLE_PAIR, self::PK, $id, ['number' => 7]);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['tenant_id', 'number'], $e->getColumns());
+            $this->assertSame(self::TABLE_PAIR, $e->getTable());
+        }
+
+        $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Alice', 'email' => 'a@x.de']);
+        $other = $this->repository->insert(self::TABLE_UNIQUE, self::PK, ['name' => 'Bob', 'email' => 'b@x.de']);
+        try {
+            $this->repository->update(self::TABLE_UNIQUE, self::PK, $other, ['email' => 'a@x.de']);
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame(['email'], $e->getColumns());
+            $this->assertSame(self::TABLE_UNIQUE, $e->getTable());
+        }
+    }
+
+    public function testPrimaryKeyViolationCarriesPkColumn(): void
+    {
+        $this->repository->insert(
+            self::TABLE_UNIQUE,
+            self::PK,
+            ['id' => 10, 'name' => 'Alice', 'email' => 'a@x.de'],
+            PkStrategy::NONE,
+        );
+
+        try {
+            $this->repository->insert(
+                self::TABLE_UNIQUE,
+                self::PK,
+                ['id' => 10, 'name' => 'Bob', 'email' => 'b@x.de'],
+                PkStrategy::NONE,
+            );
+            $this->fail('UniqueViolationException expected');
+        } catch (UniqueViolationException $e) {
+            $this->assertSame('PRIMARY', $e->getConstraint());
+            $this->assertSame(['id'], $e->getColumns());
+        }
+    }
+
+    public function testTransactionStaysUsableAfterViolationAndColumnsAreFilled(): void
+    {
+        $second = 0;
+        self::$pdo->beginTransaction();
+        try {
+            $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 7]);
+
+            try {
+                $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 7]);
+                $this->fail('UniqueViolationException expected');
+            } catch (UniqueViolationException $e) {
+                $this->assertSame(['tenant_id', 'number'], $e->getColumns());
+            }
+
+            $this->assertTrue(self::$pdo->inTransaction());
+            $second = $this->repository->insert(self::TABLE_PAIR, self::PK, ['tenant_id' => 1, 'number' => 8]);
+            self::$pdo->commit();
+        } catch (\Throwable $t) {
+            if (self::$pdo->inTransaction()) {
+                self::$pdo->rollBack();
+            }
+            throw $t;
+        }
+
+        // auto-increment values burned by the failed insert are not reused: assert on the returned id
+        $this->assertTrue($this->repository->exists(self::TABLE_PAIR, self::PK, $second));
+        $this->assertSame(2, (int) self::$pdo->query('SELECT COUNT(*) FROM ' . self::TABLE_PAIR)->fetchColumn());
     }
 }
