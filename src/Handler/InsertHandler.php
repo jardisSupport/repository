@@ -6,6 +6,7 @@ namespace JardisSupport\Repository\Handler;
 
 use JardisSupport\Contract\DbQuery\DbPreparedQueryInterface;
 use JardisSupport\Contract\Repository\Exception\PersistException;
+use JardisSupport\Contract\Repository\Exception\TransientConflictException;
 use JardisSupport\Contract\Repository\Exception\UniqueViolationException;
 use JardisSupport\DbQuery\DbInsert;
 use JardisSupport\Contract\Repository\PrimaryKey\PkStrategy;
@@ -19,12 +20,14 @@ final class InsertHandler
     private readonly IntegerPkGenerator $integerPkGenerator;
     private readonly DetectUniqueViolation $detectUniqueViolation;
     private readonly ResolveViolatedColumns $resolveViolatedColumns;
+    private readonly TranslateTransientConflict $translateTransientConflict;
 
     public function __construct(
         private readonly QueryExecutor $executor,
     ) {
         $this->detectUniqueViolation = new DetectUniqueViolation();
         $this->resolveViolatedColumns = new ResolveViolatedColumns();
+        $this->translateTransientConflict = new TranslateTransientConflict();
         $this->integerPkGenerator = new IntegerPkGenerator();
     }
 
@@ -35,6 +38,7 @@ final class InsertHandler
      * @param PkStrategy $pkStrategy Strategie fuer PK-Erzeugung
      * @return int|string Erzeugter Primary Key
      * @throws UniqueViolationException bei Verletzung eines Unique-Constraints
+     * @throws TransientConflictException bei Snapshot-/Serialisierungskonflikt oder Deadlock
      * @throws PersistException bei sonstigen Persistierungsfehlern
      */
     public function __invoke(
@@ -164,6 +168,11 @@ final class InsertHandler
                 ),
                 $table
             );
+        }
+
+        $transient = ($this->translateTransientConflict)($e, $this->executor->getDialect(), $table);
+        if ($transient !== null) {
+            return $transient;
         }
 
         return new PersistException('Insert failed for ' . $table . ': ' . $e->getMessage(), 0, $e);

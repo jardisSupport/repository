@@ -62,7 +62,7 @@ services:
       - test
 
   mariadb:
-    image: mariadb:${MARIADB_VERSION:-11.2}
+    image: mariadb:${MARIADB_VERSION:-11.8}
     environment:
       - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD:-root_password}
       - MARIADB_DATABASE=${MARIADB_DATABASE:-test_db}

@@ -7,6 +7,7 @@ namespace JardisSupport\Repository\Handler;
 use Closure;
 use JardisSupport\Contract\DbQuery\DbPreparedQueryInterface;
 use JardisSupport\Contract\Repository\Exception\PersistException;
+use JardisSupport\Contract\Repository\Exception\TransientConflictException;
 use JardisSupport\Contract\Repository\Exception\UniqueViolationException;
 use JardisSupport\DbQuery\DbUpdate;
 use JardisSupport\Repository\Handler\Query\ApplyExpectedConditions;
@@ -20,16 +21,22 @@ final class UpdateHandler
     private readonly Closure $applyExpectedConditions;
     private readonly DetectUniqueViolation $detectUniqueViolation;
     private readonly ResolveViolatedColumns $resolveViolatedColumns;
+    private readonly TranslateTransientConflict $translateTransientConflict;
 
     public function __construct(
         private readonly QueryExecutor $executor,
     ) {
         $this->detectUniqueViolation = new DetectUniqueViolation();
         $this->resolveViolatedColumns = new ResolveViolatedColumns();
+        $this->translateTransientConflict = new TranslateTransientConflict();
         $this->applyExpectedConditions = (new ApplyExpectedConditions())->__invoke(...);
     }
 
     /**
+     * @throws UniqueViolationException bei Verletzung eines Unique-Constraints
+     * @throws TransientConflictException bei Snapshot-/Serialisierungskonflikt oder Deadlock
+     * @throws PersistException bei sonstigen Persistierungsfehlern
+     *
      * @param string $table Tabellenname
      * @param string $pkColumn Primary-Key-Spalte
      * @param int|string $id Primary-Key-Wert
@@ -80,6 +87,11 @@ final class UpdateHandler
                     ),
                     $table
                 );
+            }
+
+            $transient = ($this->translateTransientConflict)($e, $this->executor->getDialect(), $table);
+            if ($transient !== null) {
+                throw $transient;
             }
 
             throw new PersistException(

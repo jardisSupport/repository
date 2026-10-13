@@ -68,16 +68,26 @@ $rows = $repo->findByQuery(
 
 ## EXCEPTIONS
 ```php
-use JardisSupport\Contract\Repository\Exception\{PersistException, RecordNotFoundException};
+use JardisSupport\Contract\Repository\Exception\{PersistException, RecordNotFoundException, TransientConflictException};
 ```
 
 | Trigger | Exception |
 |---------|-----------|
 | Insert: empty `$values`, `NONE` without PK, `NONE` wrong PK type, `INTEGER` 3 retries exhausted | `PersistException` |
-| Update/Delete/DeleteAll: `PDOException` | `PersistException` |
+| Update/Delete/DeleteAll: `PDOException` (not unique, not transient) | `PersistException` |
 | `$expected` non-scalar value, or empty `$values` with non-empty `$expected` | `InvalidArgumentException` |
 | Duplicate Key detection | MySQL/Postgres SQLSTATE `23000`; SQLite string match `UNIQUE constraint failed` |
 | `UniqueViolationException` (subtype of `PersistException`, v1.5.0, needs contracts >= 2.5) | Insert (all `PkStrategy`) and `update()`: `getConstraint()`, `getTable()` (= `$table` of the call), `getColumns()` = COMPLETE column list of the violated index in index order, or `[]` — never a partial list (see below); `getPrevious()` = the `PDOException` |
+| `TransientConflictException` (subtype of `PersistException`, v1.6.0, needs contracts >= 2.6) | Insert (all `PkStrategy`, incl. the `INTEGER` retry loop — never swallowed), `update()`, `delete()`, `deleteAll()` on a snapshot/serialization conflict or deadlock; `getDriverCode()` text, `getPrevious()` = the `PDOException`; catch BEFORE `PersistException`; repeat the whole unit of work in a NEW transaction (HTTP: 409, not 500) |
+
+### TRANSIENT CONFLICT DETECTION (`Handler/DetectTransientConflict`, one place for all write paths)
+| Dialect | Detected (`getDriverCode()`) | Not detected |
+|---------|------------------------------|--------------|
+| MySQL/MariaDB | `1020` (row changed since snapshot, `innodb_snapshot_isolation`, MariaDB default >= 11.6, SQLSTATE HY000), `1213` (deadlock) | `1205` lock wait timeout (statement-only rollback, not a resolved conflict) |
+| Postgres | SQLSTATE `40001` (serialization failure), `40P01` (deadlock) | — |
+| SQLite | none (`SQLITE_BUSY` out of scope) | — |
+- Order in every handler: unique violation first, then transient conflict, then `PersistException`.
+- Tests: Unit `DetectTransientConflictTest`; integration MariaDB 11.8 (two connections, `START TRANSACTION WITH CONSISTENT SNAPSHOT`, update/delete/deleteAll -> `1020`) and Postgres (REPEATABLE READ `40001`; deadlock with a peer process `tests/Integration/Support/PostgresLockPeer.php` `40P01` for insert/update/delete/deleteAll). Test image: MariaDB 11.8 (`support/docker-compose.yml`).
 
 ### UNIQUE VIOLATION COLUMNS (`Handler/ResolveViolatedColumns`)
 | Dialect | Source | Fallback `[]` |
@@ -97,5 +107,5 @@ use JardisSupport\Contract\Repository\Exception\{PersistException, RecordNotFoun
 - Always `prepared: true` (SQL injection protection)
 
 ## DEPENDENCIES
-- `jardissupport/contracts` — `RepositoryInterface`, `PkStrategy`, `PersistException`, `RecordNotFoundException`, `ConnectionPoolInterface`, `DbConnectionInterface`
+- `jardissupport/contracts` (>= 2.6) — `RepositoryInterface`, `PkStrategy`, `PersistException`, `TransientConflictException`, `RecordNotFoundException`, `ConnectionPoolInterface`, `DbConnectionInterface`
 - `jardissupport/dbquery` — `DbQuery`, `DbInsert`, `DbUpdate`, `DbDelete`, `DbPreparedQuery`

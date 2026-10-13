@@ -14,9 +14,12 @@ use PDOException;
  */
 final class DeleteAllHandler
 {
+    private readonly TranslateTransientConflict $translateTransientConflict;
+
     public function __construct(
         private readonly QueryExecutor $executor,
     ) {
+        $this->translateTransientConflict = new TranslateTransientConflict();
     }
 
     /**
@@ -42,6 +45,11 @@ final class DeleteAllHandler
         try {
             $this->executor->fetchAll($prepared);
         } catch (PDOException $e) {
+            $transient = ($this->translateTransientConflict)($e, $this->executor->getDialect(), $table);
+            if ($transient !== null) {
+                throw $transient;
+            }
+
             throw new PersistException(
                 'Delete failed for ' . $table . ': ' . $e->getMessage(),
                 0,
