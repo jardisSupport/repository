@@ -19,6 +19,7 @@ An implementation of the repository pattern for PHP: a generic CRUD repository o
 - **Read/Write Splitting** — queries automatically route to a dedicated reader; mutations go to the writer
 - **3 PK Strategies** — `PkStrategy::AUTOINCREMENT`, `PkStrategy::INTEGER`, `PkStrategy::NONE` for all insert patterns
 - **ConnectionPool Integration** — accepts a `ConnectionPoolInterface` or a plain `PDO` instance
+- **Savepoints on plain PDO** — the `Adapter\PdoConnection` wrapper implements `SavepointInterface` (`savepoint()`, `releaseSavepoint()`, `rollbackToSavepoint()`) like the dbconnection adapter
 - **Query Builder Support** — `findByQuery()` accepts any `DbQueryBuilderInterface` for complex SELECT statements
 - **Exists Check** — `exists()` avoids full row fetches when only presence matters
 - **Batch Delete** — `deleteAll()` removes multiple rows in a single call
