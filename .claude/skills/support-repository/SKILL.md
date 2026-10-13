@@ -56,6 +56,7 @@ delete(string $table, string $pkColumn, int|string $id, array $expected = []): b
 - `insert`, `update`, `delete`, `deleteAll` → `$pool->getWriter()`
 - `findById`, `findByQuery`, `exists` → `$pool->getReader()`
 - PDO mode: same connection for reader and writer (wrapped via `PdoConnectionPool`)
+- `Adapter\PdoConnection` (plain-PDO wrapper) also implements `SavepointInterface` (`savepoint`/`releaseSavepoint`/`rollbackToSavepoint`, name `[A-Za-z_][A-Za-z0-9_]*` max 63, no transaction → `RuntimeException`)
 
 ## FINDBYQUERY
 ```php
