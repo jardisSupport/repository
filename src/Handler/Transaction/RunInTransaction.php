@@ -14,8 +14,10 @@ use JardisSupport\Repository\Exception\TransactionLostException;
  * The transaction bracket around a unit of work.
  *
  * 1. No open transaction and not nested: the bracket begins its own and commits on success.
- * 2. An open transaction: the work runs in a savepoint with the name the caller gives; success releases
- *    it, a failure rolls back to it and then releases it. A connection without
+ * 2. An open transaction: the work runs in a savepoint whose name is derived from the caller's name and
+ *    unique among the open brackets of the connection (`<name>_<object id of the work closure>`, the name
+ *    cut at its end when the suffix would exceed {@see SavepointInterface::MAX_NAME_LENGTH}); success
+ *    releases it, a failure rolls back to it and then releases it. A connection without
  *    {@see SavepointInterface} is a configuration error.
  * 3. Nested and no open transaction: no transaction of its own, the work runs directly.
  * 4. A failed answer (`$failed($result) === true`) or a throw rolls back; `$failed` and the commit run
@@ -91,16 +93,32 @@ final class RunInTransaction
             ));
         }
 
-        $connection->savepoint($savepoint);
+        $name = $this->uniqueName($savepoint, $work);
+
+        $connection->savepoint($name);
 
         return $this->settle(
             $connection,
             $work,
             $failed,
-            static fn() => $connection->releaseSavepoint($savepoint),
-            static fn() => $connection->rollbackToSavepoint($savepoint),
-            static fn() => $connection->releaseSavepoint($savepoint)
+            static fn() => $connection->releaseSavepoint($name),
+            static fn() => $connection->rollbackToSavepoint($name),
+            static fn() => $connection->releaseSavepoint($name)
         );
+    }
+
+    /**
+     * The closure of every open bracket is alive while the bracket is open, so its object id is unique among
+     * the simultaneously open brackets - no counter that error paths would have to unwind. Nothing is cut
+     * from the end of the suffix, only from the end of the caller's name, which keeps the identifier start.
+     *
+     * @param \Closure(): mixed $work
+     */
+    private function uniqueName(string $callerName, \Closure $work): string
+    {
+        $suffix = '_' . spl_object_id($work);
+
+        return substr($callerName, 0, SavepointInterface::MAX_NAME_LENGTH - strlen($suffix)) . $suffix;
     }
 
     /**

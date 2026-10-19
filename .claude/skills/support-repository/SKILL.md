@@ -108,7 +108,7 @@ use JardisSupport\Repository\Exception\TransactionConfigurationException;
 $connection = (new ResolveConnection())($poolOrPdoOrNull);   // Pool -> getWriter(), \PDO -> PdoConnection, null -> null
 $result = (new RunInTransaction())(
     $connection,                 // ?DbConnectionInterface; null -> TransactionConfigurationException
-    'jardis_persist_order',      // savepoint name (caller's; identifier form, <= MAX_NAME_LENGTH)
+    'jardis_persist_order',      // base of the savepoint name (identifier form); the real name is derived, see table
     fn() => $work(),             // \Closure, return value is returned
     null,                        // ?\Closure $failed: fn(mixed): bool; null = DomainResponseInterface status >= 400
     false,                       // bool $nested
@@ -117,7 +117,7 @@ $result = (new RunInTransaction())(
 | Situation | Behaviour |
 |-----------|-----------|
 | no open transaction, `$nested = false` | `beginTransaction` ... `commit` |
-| open transaction | `savepoint($name)`; ok -> `releaseSavepoint`; failure -> `rollbackToSavepoint` THEN `releaseSavepoint`; no `SavepointInterface` -> `TransactionConfigurationException` |
+| open transaction | `savepoint($name)` with `$name` = `<caller name>_<spl_object_id($work)>` (unique among the open brackets of the connection, so equal caller names in nested brackets never collide; caller name cut at its end if the total would exceed `MAX_NAME_LENGTH`); ok -> `releaseSavepoint`; failure -> `rollbackToSavepoint` THEN `releaseSavepoint`; no `SavepointInterface` -> `TransactionConfigurationException` |
 | `$nested = true`, no open transaction | `$work()` directly, no transaction |
 | `$failed($result) === true` or throw | rollback (only while a transaction is open); throw is thrown on unchanged |
 | `$failed` or `commit` throws | rollback (only while open), the cause stays, rethrown |

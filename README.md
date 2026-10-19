@@ -192,7 +192,7 @@ The integration tests reproduce the conflicts for real: MariaDB 11.8 with snapsh
 ```php
 public function __invoke(
     ?DbConnectionInterface $connection,
-    string $savepoint,          // name the caller gives; identifier form, at most SavepointInterface::MAX_NAME_LENGTH
+    string $savepoint,          // base of the savepoint name; identifier form, the derived name stays within SavepointInterface::MAX_NAME_LENGTH
     \Closure $work,             // the unit of work; its return value is returned
     ?\Closure $failed = null,   // fn(mixed $result): bool - true rolls back; null = DomainResponseInterface with status >= 400
     bool $nested = false,       // true: without an open transaction the work runs directly, no transaction of its own
@@ -202,7 +202,7 @@ public function __invoke(
 Five rules:
 
 1. No open transaction and `$nested = false`: `beginTransaction`, `commit` on success.
-2. An open transaction: the work runs in a savepoint with the name you give; success releases it, a failure rolls back to it and then releases it. A connection without `SavepointInterface` throws `TransactionConfigurationException`.
+2. An open transaction: the work runs in a savepoint whose name is derived from the name you give and unique among the open brackets of the connection (`<name>_<object id of the work closure>`, your name is cut at its end if the suffix would exceed `MAX_NAME_LENGTH`) - nested brackets may pass the same name; success releases it, a failure rolls back to it and then releases it. A connection without `SavepointInterface` throws `TransactionConfigurationException`.
 3. `$nested = true` and no open transaction: no transaction of its own, `$work()` runs directly.
 4. `$failed($result) === true` or a throw rolls back. `$failed` and `commit` run inside the guarded block: a throw there also rolls back - only while a transaction is open - and stays the cause. A failing release never replaces the cause. A failing rollback (or rollback to the savepoint) after a throw means the transaction is lost: the bracket throws `TransactionLostException` (`final`, extends `TransientConflictException`) with the cause as `getPrevious()` and the rollback error as `getRollbackFailure()`. Every other throw (also `TransientConflictException`) is thrown on unchanged; a failing rollback after a failed answer without a throw propagates as it is.
 5. `$connection === null` throws `TransactionConfigurationException` (`final`, extends `\RuntimeException`). Opting out of the transaction means not calling the bracket.
@@ -215,7 +215,7 @@ $connection = (new ResolveConnection())($pool);   // ConnectionPoolInterface -> 
 
 $response = (new RunInTransaction())(
     $connection,
-    'jardis_persist_order',                        // used as savepoint name when a transaction is already open
+    'jardis_persist_order',                        // base of the savepoint name when a transaction is already open
     fn() => $this->persistOrder($handler),         // begin/commit around it, or savepoint/release
 );
 ```
