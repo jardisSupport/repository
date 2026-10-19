@@ -6,7 +6,9 @@ namespace JardisSupport\Repository\Tests\Unit\Handler\Transaction;
 
 use JardisSupport\Contract\DbConnection\DbConnectionInterface;
 use JardisSupport\Contract\Kernel\DomainResponseInterface;
+use JardisSupport\Contract\Repository\Exception\TransientConflictException;
 use JardisSupport\Repository\Exception\TransactionConfigurationException;
+use JardisSupport\Repository\Exception\TransactionLostException;
 use JardisSupport\Repository\Handler\Transaction\RunInTransaction;
 use JardisSupport\Repository\Tests\Support\Db\FakeSavepointConnection;
 use JardisSupport\Repository\Tests\Support\Db\Ledger;
@@ -213,5 +215,58 @@ final class RunInTransactionTest extends TestCase
 
         $this->assertSame('rejected', $answer);
         $this->assertSame(['beginTransaction'], $this->connection->calls());
+    }
+
+    public function testFailingReleaseAfterASuccessfulRollbackKeepsTheCause(): void
+    {
+        // The release failing "verdraengt nichts": the rollback worked, the cause is thrown on unchanged.
+        $this->connection->pdo()->beginTransaction();
+        $this->connection->failOn('release', new \RuntimeException('release failed'));
+        $original = new \DomainException('original');
+
+        try {
+            ($this->bracket)($this->connection, 'sp', function () use ($original) {
+                throw $original;
+            });
+            $this->fail('the original must be thrown on');
+        } catch (\DomainException $e) {
+            $this->assertSame($original, $e);
+        }
+
+        $this->assertSame(['savepoint:sp', 'rollbackTo:sp', 'release:sp'], $this->connection->calls());
+        $this->connection->pdo()->rollBack();
+    }
+
+    public function testFailingRollbackToTheSavepointOnARejectWithoutThrowPropagatesAsItIs(): void
+    {
+        // E2 decision: the reject path has no cause to keep - the failure of the rollback propagates raw.
+        $this->connection->pdo()->beginTransaction();
+        $rollbackFailure = new \RuntimeException('rollback to savepoint failed');
+        $this->connection->failOn('rollbackTo', $rollbackFailure);
+
+        try {
+            ($this->bracket)($this->connection, 'sp', fn() => 'rejected', fn(mixed $r): bool => $r === 'rejected');
+            $this->fail('the rollback failure must propagate');
+        } catch (\RuntimeException $e) {
+            $this->assertSame($rollbackFailure, $e);
+        }
+
+        $this->connection->pdo()->rollBack();
+    }
+
+    public function testTransactionLostCarriesTheCauseTheRollbackFailureAndTheDriverCode(): void
+    {
+        $cause = new TransientConflictException('conflict', '40001');
+        $rollbackFailure = new \RuntimeException('rollback failed');
+
+        $lost = new TransactionLostException($cause, $rollbackFailure);
+
+        $this->assertInstanceOf(TransientConflictException::class, $lost);
+        $this->assertSame($cause, $lost->getPrevious());
+        $this->assertSame($rollbackFailure, $lost->getRollbackFailure());
+        $this->assertSame('40001', $lost->getDriverCode());
+
+        $other = new TransactionLostException(new \DomainException('x'), $rollbackFailure);
+        $this->assertNull($other->getDriverCode(), 'only a transient cause hands its driver code on');
     }
 }

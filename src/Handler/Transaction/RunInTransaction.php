@@ -8,6 +8,7 @@ use JardisSupport\Contract\DbConnection\DbConnectionInterface;
 use JardisSupport\Contract\DbConnection\SavepointInterface;
 use JardisSupport\Contract\Kernel\DomainResponseInterface;
 use JardisSupport\Repository\Exception\TransactionConfigurationException;
+use JardisSupport\Repository\Exception\TransactionLostException;
 
 /**
  * The transaction bracket around a unit of work.
@@ -19,8 +20,9 @@ use JardisSupport\Repository\Exception\TransactionConfigurationException;
  * 3. Nested and no open transaction: no transaction of its own, the work runs directly.
  * 4. A failed answer (`$failed($result) === true`) or a throw rolls back; `$failed` and the commit run
  *    inside the guarded block, so a throw there rolls back too - only while a transaction is open - and
- *    the cause stays. A failing rollback or release never replaces the cause, and every throw is thrown
- *    on unchanged.
+ *    the cause stays. A failing release never replaces the cause. A failing rollback (to the savepoint)
+ *    after a throw means the transaction is lost: the bracket throws {@see TransactionLostException} with
+ *    the cause as previous. A failing rollback after a failed answer without a throw propagates as it is.
  * 5. No connection is a configuration error; opting out is the caller's choice - it does not call the
  *    bracket.
  *
@@ -34,6 +36,7 @@ final class RunInTransaction
      * @param (\Closure(mixed): bool)|null $failed
      * @throws TransactionConfigurationException when there is no connection, or a savepoint is needed and
      *                                           the connection offers none
+     * @throws TransactionLostException          when the work threw and the rollback failed as well
      */
     public function __invoke(
         ?DbConnectionInterface $connection,
@@ -66,7 +69,8 @@ final class RunInTransaction
             $work,
             $failed,
             static fn() => $connection->commit(),
-            static fn() => $connection->rollback()
+            static fn() => $connection->rollback(),
+            null
         );
     }
 
@@ -94,10 +98,8 @@ final class RunInTransaction
             $work,
             $failed,
             static fn() => $connection->releaseSavepoint($savepoint),
-            static function () use ($connection, $savepoint): void {
-                $connection->rollbackToSavepoint($savepoint);
-                $connection->releaseSavepoint($savepoint);
-            }
+            static fn() => $connection->rollbackToSavepoint($savepoint),
+            static fn() => $connection->releaseSavepoint($savepoint)
         );
     }
 
@@ -106,13 +108,17 @@ final class RunInTransaction
      * @param \Closure(mixed): bool $failed
      * @param \Closure(): void $commit
      * @param \Closure(): void $rollback
+     * @param (\Closure(): void)|null $release runs after the rollback (savepoint); its failure never
+     *                                         replaces the cause
+     * @throws TransactionLostException when the work threw and the rollback failed as well
      */
     private function settle(
         DbConnectionInterface $connection,
         \Closure $work,
         \Closure $failed,
         \Closure $commit,
-        \Closure $rollback
+        \Closure $rollback,
+        ?\Closure $release
     ): mixed {
         try {
             $result = $work();
@@ -121,14 +127,22 @@ final class RunInTransaction
                 $commit();
             }
         } catch (\Throwable $cause) {
-            // The cause stays: a transaction already ended has nothing to roll back, and a failing
-            // rollback must not replace the error that led here.
-            try {
-                if ($connection->inTransaction()) {
+            // The cause stays: a transaction already ended has nothing to roll back. A rollback that fails
+            // here means the transaction is lost - the cause rides along as previous.
+            if ($connection->inTransaction()) {
+                try {
                     $rollback();
+                } catch (\Throwable $rollbackFailure) {
+                    throw new TransactionLostException($cause, $rollbackFailure);
                 }
-            } catch (\Throwable) {
-                // dropped on purpose - the cause is thrown on
+
+                try {
+                    if ($release !== null) {
+                        $release();
+                    }
+                } catch (\Throwable) {
+                    // dropped on purpose - the cause is thrown on
+                }
             }
 
             throw $cause;
@@ -136,6 +150,9 @@ final class RunInTransaction
 
         if ($isFailed && $connection->inTransaction()) {
             $rollback();
+            if ($release !== null) {
+                $release();
+            }
         }
 
         return $result;

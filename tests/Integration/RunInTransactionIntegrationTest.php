@@ -6,6 +6,7 @@ namespace JardisSupport\Repository\Tests\Integration;
 
 use JardisSupport\Contract\Repository\Exception\TransientConflictException;
 use JardisSupport\Repository\Adapter\PdoConnectionPool;
+use JardisSupport\Repository\Exception\TransactionLostException;
 use JardisSupport\Repository\Handler\Transaction\RunInTransaction;
 use JardisSupport\Repository\Repository;
 use JardisSupport\Repository\Tests\Support\Db\Ledger;
@@ -247,22 +248,52 @@ final class RunInTransactionIntegrationTest extends TestCase
     }
 
     #[DataProvider('dialects')]
-    public function testFailingRollbackKeepsTheOriginalCause(string $dialect): void
+    public function testFailingRollbackAfterAThrowIsATransactionLostWithTheCauseAsPrevious(string $dialect): void
     {
+        // E4-P2 Nachlauf, Q7 (d): a failing rollback no longer swallows - the transaction is lost.
         $this->open($dialect);
-        $this->connection->failOn('rollback', new \RuntimeException('rollback failed'));
+        $rollbackFailure = new \RuntimeException('rollback failed');
+        $this->connection->failOn('rollback', $rollbackFailure);
         $original = new \DomainException('original');
 
         try {
             ($this->bracket)($this->connection, 'sp', function () use ($original) {
                 throw $original;
             });
-            $this->fail('the original must be thrown on');
-        } catch (\Throwable $e) {
-            $this->assertSame($original, $e);
+            $this->fail('the transaction lost must be thrown');
+        } catch (TransactionLostException $e) {
+            $this->assertSame($original, $e->getPrevious());
+            $this->assertSame($rollbackFailure, $e->getRollbackFailure());
         }
 
         $this->assertSame(['beginTransaction', 'rollback'], $this->connection->calls());
+    }
+
+    #[DataProvider('dialects')]
+    public function testFailingRollbackToTheSavepointAfterAThrowIsATransactionLost(string $dialect): void
+    {
+        $this->open($dialect);
+        $this->pdo()->beginTransaction();
+        $rollbackFailure = new \RuntimeException('rollback to savepoint failed');
+        $this->connection->failOn('rollbackTo', $rollbackFailure);
+        $original = new \DomainException('original');
+
+        try {
+            ($this->bracket)($this->connection, 'sp', function () use ($original) {
+                throw $original;
+            });
+            $this->fail('the transaction lost must be thrown');
+        } catch (TransactionLostException $e) {
+            $this->assertSame($original, $e->getPrevious());
+            $this->assertSame($rollbackFailure, $e->getRollbackFailure());
+        }
+
+        $this->assertSame(
+            ['savepoint:sp', 'rollbackTo:sp'],
+            $this->connection->calls(),
+            'no release after a lost rollback'
+        );
+        $this->pdo()->rollBack();
     }
 
     #[DataProvider('dialects')]

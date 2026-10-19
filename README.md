@@ -204,7 +204,7 @@ Five rules:
 1. No open transaction and `$nested = false`: `beginTransaction`, `commit` on success.
 2. An open transaction: the work runs in a savepoint with the name you give; success releases it, a failure rolls back to it and then releases it. A connection without `SavepointInterface` throws `TransactionConfigurationException`.
 3. `$nested = true` and no open transaction: no transaction of its own, `$work()` runs directly.
-4. `$failed($result) === true` or a throw rolls back. `$failed` and `commit` run inside the guarded block: a throw there also rolls back - only while a transaction is open - and stays the cause. A failing rollback or release never replaces the cause; every throw (also `TransientConflictException`) is thrown on unchanged.
+4. `$failed($result) === true` or a throw rolls back. `$failed` and `commit` run inside the guarded block: a throw there also rolls back - only while a transaction is open - and stays the cause. A failing release never replaces the cause. A failing rollback (or rollback to the savepoint) after a throw means the transaction is lost: the bracket throws `TransactionLostException` (`final`, extends `TransientConflictException`) with the cause as `getPrevious()` and the rollback error as `getRollbackFailure()`. Every other throw (also `TransientConflictException`) is thrown on unchanged; a failing rollback after a failed answer without a throw propagates as it is.
 5. `$connection === null` throws `TransactionConfigurationException` (`final`, extends `\RuntimeException`). Opting out of the transaction means not calling the bracket.
 
 ```php
@@ -220,7 +220,7 @@ $response = (new RunInTransaction())(
 );
 ```
 
-The bracket does not translate conflicts: a `TransientConflictException` leaves the bracket as it came (the 409 answer is the caller's business).
+The bracket does not translate conflicts: a `TransientConflictException` leaves the bracket as it came (the 409 answer is the caller's business). `TransactionLostException` is the one exception it adds: the transaction is lost after a failed rollback - the owner of the transaction answers 409 transient, one who does not own it throws it on; a Persist never translates it.
 
 ## Documentation
 

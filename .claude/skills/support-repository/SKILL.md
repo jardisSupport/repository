@@ -121,8 +121,10 @@ $result = (new RunInTransaction())(
 | `$nested = true`, no open transaction | `$work()` directly, no transaction |
 | `$failed($result) === true` or throw | rollback (only while a transaction is open); throw is thrown on unchanged |
 | `$failed` or `commit` throws | rollback (only while open), the cause stays, rethrown |
-| rollback/release fails during a throw | dropped - the cause is thrown, never replaced |
-- `TransientConflictException` and every other throw run through unchanged (no 409 here).
+| rollback (to the savepoint) fails during a throw | `TransactionLostException(cause, rollbackFailure)`: `getPrevious()` = cause, `getRollbackFailure()`; no release follows |
+| release fails after a successful rollback during a throw | dropped - the cause is thrown, never replaced |
+| rollback fails after a failed answer (no throw) | propagates as it is |
+- `TransientConflictException` and every other throw run through unchanged (no 409 here). Only exception the bracket adds: `TransactionLostException` (`final`, `extends TransientConflictException`, in `Exception/`) - the transaction is lost; owner answers 409 transient, a non-owner throws it on, Persist never translates it.
 - Opt-out = the caller does not call the bracket. No `Response`/`Workflow`/kernel imports; only `contracts` types.
 - `TransactionConfigurationException` is `final`, `extends \RuntimeException` (own name: `response` has its own `ConfigurationException`).
 - Tests: Unit `RunInTransactionTest`, `ResolveConnectionTest` (SQLite + fakes); integration `RunInTransactionIntegrationTest` on SQLite, MariaDB, Postgres.
