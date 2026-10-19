@@ -34,6 +34,25 @@ final class RunInTransactionTest extends TestCase
         $this->bracket = new RunInTransaction();
     }
 
+    /**
+     * The savepoint name the bracket derived from the caller's name: `<caller name>_<object id>`.
+     *
+     * @param list<string> $calls
+     */
+    private function derivedName(array $calls, string $callerName, int $position = 0): string
+    {
+        $names = [];
+        foreach ($calls as $call) {
+            if (str_starts_with($call, 'savepoint:')) {
+                $names[] = substr($call, strlen('savepoint:'));
+            }
+        }
+        $this->assertArrayHasKey($position, $names);
+        $this->assertMatchesRegularExpression('/^' . preg_quote($callerName, '/') . '_\d+$/', $names[$position]);
+
+        return $names[$position];
+    }
+
     private function response(int $status): DomainResponseInterface
     {
         $response = $this->createStub(DomainResponseInterface::class);
@@ -85,13 +104,14 @@ final class RunInTransactionTest extends TestCase
         $this->assertSame(['kept'], $this->ledger->notes(), 'a 2xx answer commits');
     }
 
-    public function testSavepointNameIsTheOneTheCallerGives(): void
+    public function testSavepointNameIsDerivedFromTheOneTheCallerGives(): void
     {
         $failing = new FakeSavepointConnection();
         ($this->bracket)($failing, 'jardis_persist_order', fn() => 'x', fn(): bool => true);
 
+        $name = $this->derivedName($failing->calls(), 'jardis_persist_order');
         $this->assertSame(
-            ['savepoint:jardis_persist_order', 'rollbackTo:jardis_persist_order', 'release:jardis_persist_order'],
+            ['savepoint:' . $name, 'rollbackTo:' . $name, 'release:' . $name],
             $failing->calls(),
             'a failure rolls back to the savepoint and only then releases it'
         );
@@ -99,7 +119,8 @@ final class RunInTransactionTest extends TestCase
         $succeeding = new FakeSavepointConnection();
         ($this->bracket)($succeeding, 'sp_2', fn() => 'x');
 
-        $this->assertSame(['savepoint:sp_2', 'release:sp_2'], $succeeding->calls());
+        $name = $this->derivedName($succeeding->calls(), 'sp_2');
+        $this->assertSame(['savepoint:' . $name, 'release:' . $name], $succeeding->calls());
     }
 
     public function testNestedWithoutOpenTransactionRunsWithoutOwnTransaction(): void
@@ -164,10 +185,14 @@ final class RunInTransactionTest extends TestCase
         });
 
         $this->assertSame('deep', $answer);
+        $calls = $this->connection->calls();
+        $one = $this->derivedName($calls, 'sp_1', 0);
+        $two = $this->derivedName($calls, 'sp_2', 1);
+        $this->assertNotSame($one, $two);
         $this->assertSame(
-            ['beginTransaction', 'savepoint:sp_1', 'savepoint:sp_2', 'release:sp_2', 'release:sp_1', 'commit'],
-            $this->connection->calls(),
-            'the one transaction is the outermost one; the nested units work in savepoints named by the caller'
+            ['beginTransaction', 'savepoint:' . $one, 'savepoint:' . $two, 'release:' . $two, 'release:' . $one, 'commit'],
+            $calls,
+            'the one transaction is the outermost one; the nested units work in savepoints derived from the caller names'
         );
         $this->assertSame(['deep'], $this->ledger->notes());
     }
@@ -233,7 +258,8 @@ final class RunInTransactionTest extends TestCase
             $this->assertSame($original, $e);
         }
 
-        $this->assertSame(['savepoint:sp', 'rollbackTo:sp', 'release:sp'], $this->connection->calls());
+        $name = $this->derivedName($this->connection->calls(), 'sp');
+        $this->assertSame(['savepoint:' . $name, 'rollbackTo:' . $name, 'release:' . $name], $this->connection->calls());
         $this->connection->pdo()->rollBack();
     }
 

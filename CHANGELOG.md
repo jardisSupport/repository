@@ -4,6 +4,11 @@ All notable changes to `jardissupport/repository` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/). Releases before 1.7.0 are listed in the git history and the GitHub releases.
 
+## [Unreleased]
+
+### Fixed
+- `RunInTransaction`: the savepoint of a bracket inside an open transaction is named `<caller name>_<object id of the work closure>` instead of the caller's name as given. Nested brackets that passed the same name (two doors that both saw depth 0) overwrote one another's savepoint on MySQL/MariaDB (`RELEASE SAVEPOINT` failed with 1305 and surfaced as `TransactionLostException`); the name is now unique among the open brackets of a connection. No signature change. The caller's name is cut at its end when the suffix would exceed `SavepointInterface::MAX_NAME_LENGTH`.
+
 ## [1.7.0] - Unreleased
 
 ### Added
