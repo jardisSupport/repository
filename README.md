@@ -185,6 +185,43 @@ try {
 
 The integration tests reproduce the conflicts for real: MariaDB 11.8 with snapshot isolation (two connections, `START TRANSACTION WITH CONSISTENT SNAPSHOT`), PostgreSQL REPEATABLE READ (`40001`) and a deadlock between the test session and a peer process (`40P01`, for insert, update, delete and deleteAll).
 
+## Transaction bracket — RunInTransaction, ResolveConnection (1.7.0)
+
+`RunInTransaction` runs one unit of work in a transaction - its own, or a savepoint inside one that is already open. It knows nothing about processes, responses or kernels.
+
+```php
+public function __invoke(
+    ?DbConnectionInterface $connection,
+    string $savepoint,          // name the caller gives; identifier form, at most SavepointInterface::MAX_NAME_LENGTH
+    \Closure $work,             // the unit of work; its return value is returned
+    ?\Closure $failed = null,   // fn(mixed $result): bool - true rolls back; null = DomainResponseInterface with status >= 400
+    bool $nested = false,       // true: without an open transaction the work runs directly, no transaction of its own
+): mixed;
+```
+
+Five rules:
+
+1. No open transaction and `$nested = false`: `beginTransaction`, `commit` on success.
+2. An open transaction: the work runs in a savepoint with the name you give; success releases it, a failure rolls back to it and then releases it. A connection without `SavepointInterface` throws `TransactionConfigurationException`.
+3. `$nested = true` and no open transaction: no transaction of its own, `$work()` runs directly.
+4. `$failed($result) === true` or a throw rolls back. `$failed` and `commit` run inside the guarded block: a throw there also rolls back - only while a transaction is open - and stays the cause. A failing rollback or release never replaces the cause; every throw (also `TransientConflictException`) is thrown on unchanged.
+5. `$connection === null` throws `TransactionConfigurationException` (`final`, extends `\RuntimeException`). Opting out of the transaction means not calling the bracket.
+
+```php
+use JardisSupport\Repository\Handler\Transaction\ResolveConnection;
+use JardisSupport\Repository\Handler\Transaction\RunInTransaction;
+
+$connection = (new ResolveConnection())($pool);   // ConnectionPoolInterface -> writer, \PDO -> PdoConnection, null -> null
+
+$response = (new RunInTransaction())(
+    $connection,
+    'jardis_persist_order',                        // used as savepoint name when a transaction is already open
+    fn() => $this->persistOrder($handler),         // begin/commit around it, or savepoint/release
+);
+```
+
+The bracket does not translate conflicts: a `TransientConflictException` leaves the bracket as it came (the 409 answer is the caller's business).
+
 ## Documentation
 
 Full documentation, guides, and API reference:

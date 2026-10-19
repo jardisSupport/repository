@@ -100,6 +100,33 @@ use JardisSupport\Contract\Repository\Exception\{PersistException, RecordNotFoun
 | Parameter binding (v1.2.0+) | `Handler/BindTypedParameters` binds each value via `bindValue()` with `PDO::PARAM_BOOL`/`PARAM_INT`/`PARAM_NULL`/`PARAM_STR` — `false` reaches Postgres as BOOLEAN, not `''`. **< v1.2.0:** `execute($bindings)` bound everything as string → Postgres `SQLSTATE[22P02] invalid input syntax for type boolean: ""`; there, bind bools as int 0/1 yourself. |
 | `RecordNotFoundException` | Defined in contract — not thrown internally; for custom implementations |
 
+## TRANSACTION BRACKET (v1.7.0, `Handler/Transaction/`)
+```php
+use JardisSupport\Repository\Handler\Transaction\{RunInTransaction, ResolveConnection};
+use JardisSupport\Repository\Exception\TransactionConfigurationException;
+
+$connection = (new ResolveConnection())($poolOrPdoOrNull);   // Pool -> getWriter(), \PDO -> PdoConnection, null -> null
+$result = (new RunInTransaction())(
+    $connection,                 // ?DbConnectionInterface; null -> TransactionConfigurationException
+    'jardis_persist_order',      // savepoint name (caller's; identifier form, <= MAX_NAME_LENGTH)
+    fn() => $work(),             // \Closure, return value is returned
+    null,                        // ?\Closure $failed: fn(mixed): bool; null = DomainResponseInterface status >= 400
+    false,                       // bool $nested
+);
+```
+| Situation | Behaviour |
+|-----------|-----------|
+| no open transaction, `$nested = false` | `beginTransaction` ... `commit` |
+| open transaction | `savepoint($name)`; ok -> `releaseSavepoint`; failure -> `rollbackToSavepoint` THEN `releaseSavepoint`; no `SavepointInterface` -> `TransactionConfigurationException` |
+| `$nested = true`, no open transaction | `$work()` directly, no transaction |
+| `$failed($result) === true` or throw | rollback (only while a transaction is open); throw is thrown on unchanged |
+| `$failed` or `commit` throws | rollback (only while open), the cause stays, rethrown |
+| rollback/release fails during a throw | dropped - the cause is thrown, never replaced |
+- `TransientConflictException` and every other throw run through unchanged (no 409 here).
+- Opt-out = the caller does not call the bracket. No `Response`/`Workflow`/kernel imports; only `contracts` types.
+- `TransactionConfigurationException` is `final`, `extends \RuntimeException` (own name: `response` has its own `ConfigurationException`).
+- Tests: Unit `RunInTransactionTest`, `ResolveConnectionTest` (SQLite + fakes); integration `RunInTransactionIntegrationTest` on SQLite, MariaDB, Postgres.
+
 ## LAYER RULES
 - `RepositoryInterface` in Application/Domain; `Repository` in Infrastructure/Composition Root
 - Raw data (arrays) — no Entities. Hydration via `jardissupport/data`
@@ -107,5 +134,5 @@ use JardisSupport\Contract\Repository\Exception\{PersistException, RecordNotFoun
 - Always `prepared: true` (SQL injection protection)
 
 ## DEPENDENCIES
-- `jardissupport/contracts` (>= 2.6) — `RepositoryInterface`, `PkStrategy`, `PersistException`, `TransientConflictException`, `RecordNotFoundException`, `ConnectionPoolInterface`, `DbConnectionInterface`
+- `jardissupport/contracts` (>= 2.6) — `RepositoryInterface`, `PkStrategy`, `PersistException`, `TransientConflictException`, `RecordNotFoundException`, `ConnectionPoolInterface`, `DbConnectionInterface`, `SavepointInterface`, `DomainResponseInterface`
 - `jardissupport/dbquery` — `DbQuery`, `DbInsert`, `DbUpdate`, `DbDelete`, `DbPreparedQuery`
