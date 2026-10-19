@@ -1,0 +1,13 @@
+# Changelog
+
+All notable changes to `jardissupport/repository` are documented in this file.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+versioning follows [SemVer](https://semver.org/). Releases before 1.7.0 are listed in the git history and the GitHub releases.
+
+## [1.7.0] - Unreleased
+
+### Added
+- `Handler\Transaction\RunInTransaction`: the transaction bracket - own transaction or savepoint (name given by the caller), rollback on a failed answer or a throw, `$failed` and `commit` inside the guarded block, a failing rollback after a throw is a `TransactionLostException` (cause as previous), `$nested` without an open transaction runs the work directly.
+- `Handler\Transaction\ResolveConnection`: `ConnectionPoolInterface|\PDO|null` to the writer connection, without a kernel.
+- `Exception\TransactionConfigurationException` (`final`, extends `\RuntimeException`): no connection, or a savepoint is needed and the connection offers none.
+- `Exception\TransactionLostException` (`final`, extends the contract's `TransientConflictException`): the work threw and the rollback (or the rollback to the savepoint) failed as well. The cause is `getPrevious()`, the rollback failure `getRollbackFailure()`; the driver code of a transient cause is carried on. `RunInTransaction` throws it instead of swallowing the failing rollback and throwing the bare cause. Who owns the transaction answers 409 transient, one who does not own it throws it on; a Persist never translates it. A failing release after a successful rollback and the reject path (a failed answer without a throw) are unchanged.
