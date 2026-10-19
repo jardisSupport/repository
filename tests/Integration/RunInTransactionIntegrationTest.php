@@ -16,7 +16,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The transaction bracket against real databases: SQLite `:memory:`, MariaDB and PostgreSQL (services from
+ * The transaction bracket against real databases: SQLite `:memory:`, MySQL, MariaDB and PostgreSQL (services from
  * support/docker-compose.yml). Every test runs on every dialect; the transient conflict on those that have
  * snapshot conflicts (MariaDB with innodb_snapshot_isolation, PostgreSQL with REPEATABLE READ).
  */
@@ -46,7 +46,7 @@ final class RunInTransactionIntegrationTest extends TestCase
      */
     public static function dialects(): array
     {
-        return ['sqlite' => ['sqlite'], 'mariadb' => ['mariadb'], 'postgres' => ['postgres']];
+        return ['sqlite' => ['sqlite'], 'mysql' => ['mysql'], 'mariadb' => ['mariadb'], 'postgres' => ['postgres']];
     }
 
     /**
@@ -70,6 +70,17 @@ final class RunInTransactionIntegrationTest extends TestCase
         $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC];
 
         return match ($dialect) {
+            'mysql' => new PDO(
+                sprintf(
+                    'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
+                    $_ENV['MYSQL_HOST'] ?? 'mysql',
+                    (int) ($_ENV['MYSQL_PORT'] ?? 3306),
+                    $_ENV['MYSQL_DATABASE'] ?? 'test_db'
+                ),
+                $_ENV['MYSQL_USER'] ?? 'test_user',
+                $_ENV['MYSQL_PASSWORD'] ?? 'test_password',
+                $options
+            ),
             'mariadb' => new PDO(
                 sprintf(
                     'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
@@ -135,10 +146,8 @@ final class RunInTransactionIntegrationTest extends TestCase
             $this->ledger()->add('inner');
         });
 
-        $this->assertSame(
-            ['savepoint:jardis_persist_order', 'release:jardis_persist_order'],
-            $this->connection->calls()
-        );
+        $name = $this->derivedName('jardis_persist_order');
+        $this->assertSame(['savepoint:' . $name, 'release:' . $name], $this->connection->calls());
         $this->assertTrue($this->connection->inTransaction(), 'the holder of the transaction decides');
         $this->pdo()->rollBack();
         $this->assertSame([], $this->ledger()->notes(), 'the work belonged to the surrounding transaction');
@@ -175,10 +184,159 @@ final class RunInTransactionIntegrationTest extends TestCase
         }, fn(mixed $result): bool => $result === 'rejected');
 
         $this->assertSame('rejected', $answer);
-        $this->assertSame(['savepoint:sp_1', 'rollbackTo:sp_1', 'release:sp_1'], $this->connection->calls());
+        $name = $this->derivedName('sp_1');
+        $this->assertSame(
+            ['savepoint:' . $name, 'rollbackTo:' . $name, 'release:' . $name],
+            $this->connection->calls()
+        );
         $this->assertTrue($this->connection->inTransaction());
         $this->pdo()->commit();
         $this->assertSame(['outer'], $this->ledger()->notes());
+    }
+
+    /**
+     * @return list<string> the names of the `savepoint:` calls, in order
+     */
+    private function savepointNames(): array
+    {
+        $names = [];
+        foreach ($this->connection->calls() as $call) {
+            if (str_starts_with($call, 'savepoint:')) {
+                $names[] = substr($call, strlen('savepoint:'));
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * The one savepoint name of the run: `<caller name>_<object id>`.
+     */
+    private function derivedName(string $callerName): string
+    {
+        $names = $this->savepointNames();
+        $this->assertCount(1, $names);
+        $this->assertMatchesRegularExpression('/^' . preg_quote($callerName, '/') . '_\d+$/', $names[0]);
+
+        return $names[0];
+    }
+
+    /**
+     * @param list<string> $names
+     */
+    private function assertDerivedAndUnique(array $names, int $expected): void
+    {
+        $this->assertCount($expected, $names);
+        $this->assertCount($expected, array_unique($names), 'no two open savepoints carry the same name');
+        foreach ($names as $name) {
+            $this->assertMatchesRegularExpression('/^sp_0_\d+$/', $name, 'derived from the caller name');
+        }
+    }
+
+    #[DataProvider('dialects')]
+    public function testNestedBracketsWithTheSameCallerNameGetOwnSavepoints(string $dialect): void
+    {
+        $this->open($dialect);
+        $this->pdo()->beginTransaction();
+        $this->ledger()->add('outer');
+
+        $answer = ($this->bracket)($this->connection, 'sp_0', function () {
+            $this->ledger()->add('first');
+
+            return ($this->bracket)($this->connection, 'sp_0', function () {
+                $this->ledger()->add('second');
+
+                return 'done';
+            });
+        });
+
+        $this->assertSame('done', $answer);
+        $this->assertDerivedAndUnique($this->savepointNames(), 2);
+        $this->assertTrue($this->connection->inTransaction());
+        $this->pdo()->commit();
+        $this->assertSame(['outer', 'first', 'second'], $this->ledger()->notes());
+    }
+
+    #[DataProvider('dialects')]
+    public function testThreeLevelsOfTheSameNameInnermostRejectRollsBackOnlyItself(string $dialect): void
+    {
+        $this->open($dialect);
+        $this->pdo()->beginTransaction();
+        $rejected = fn(mixed $result): bool => $result === 'rejected';
+
+        $answer = ($this->bracket)($this->connection, 'sp_0', function () use ($rejected) {
+            $this->ledger()->add('level1');
+
+            return ($this->bracket)($this->connection, 'sp_0', function () use ($rejected) {
+                $this->ledger()->add('level2');
+                ($this->bracket)($this->connection, 'sp_0', function () {
+                    $this->ledger()->add('level3');
+
+                    return 'rejected';
+                }, $rejected);
+
+                return 'ok';
+            }, $rejected);
+        }, $rejected);
+
+        $this->assertSame('ok', $answer);
+        $this->assertDerivedAndUnique($this->savepointNames(), 3);
+        $this->assertTrue($this->connection->inTransaction());
+        $this->pdo()->commit();
+        $this->assertSame(['level1', 'level2'], $this->ledger()->notes());
+    }
+
+    #[DataProvider('dialects')]
+    public function testInnermostThrowOfTheSameNameArrivesAsCauseAndRollsBackTheOuterOnes(string $dialect): void
+    {
+        $this->open($dialect);
+        $this->pdo()->beginTransaction();
+        $this->ledger()->add('holder');
+        $original = new \DomainException('innermost');
+
+        try {
+            ($this->bracket)($this->connection, 'sp_0', function () use ($original) {
+                $this->ledger()->add('level1');
+
+                return ($this->bracket)($this->connection, 'sp_0', function () use ($original) {
+                    $this->ledger()->add('level2');
+
+                    return ($this->bracket)($this->connection, 'sp_0', function () use ($original) {
+                        $this->ledger()->add('level3');
+
+                        throw $original;
+                    });
+                });
+            });
+            $this->fail('the cause must arrive');
+        } catch (TransactionLostException $e) {
+            $this->fail('a collision of savepoint names must not lose the transaction: ' . $e->getMessage());
+        } catch (\DomainException $e) {
+            $this->assertSame($original, $e);
+        }
+
+        $this->assertDerivedAndUnique($this->savepointNames(), 3);
+        $this->assertTrue($this->connection->inTransaction());
+        $this->pdo()->commit();
+        $this->assertSame(['holder'], $this->ledger()->notes());
+    }
+
+    #[DataProvider('dialects')]
+    public function testLongCallerNameIsCutSoTheDerivedNameFitsTheLimit(string $dialect): void
+    {
+        $this->open($dialect);
+        $this->pdo()->beginTransaction();
+
+        ($this->bracket)($this->connection, str_repeat('a', 63), function () {
+            $this->ledger()->add('inner');
+        });
+
+        $names = $this->savepointNames();
+        $this->assertCount(1, $names);
+        $this->assertLessThanOrEqual(63, strlen($names[0]));
+        $this->assertMatchesRegularExpression('/^a+_\d+$/', $names[0]);
+        $this->pdo()->commit();
+        $this->assertSame(['inner'], $this->ledger()->notes());
     }
 
     #[DataProvider('dialects')]
@@ -288,8 +446,9 @@ final class RunInTransactionIntegrationTest extends TestCase
             $this->assertSame($rollbackFailure, $e->getRollbackFailure());
         }
 
+        $name = $this->derivedName('sp');
         $this->assertSame(
-            ['savepoint:sp', 'rollbackTo:sp'],
+            ['savepoint:' . $name, 'rollbackTo:' . $name],
             $this->connection->calls(),
             'no release after a lost rollback'
         );
