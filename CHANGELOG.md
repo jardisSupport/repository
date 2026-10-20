@@ -6,6 +6,10 @@ versioning follows [SemVer](https://semver.org/). Releases before 1.7.0 are list
 
 ## [Unreleased]
 
+### Added
+- `Handler\Transaction\RunOwnedTransaction` and `Data\OwnedResult`: the transaction bracket for a use case that knows only its depth. Savepoint name `sp_<depth>` and "nested" (`depth > 0`) are derived, the ownership (no transaction open on entry) is read before the bracket acts and handed back as `OwnedResult::$owner`; a throw is rolled back as before and comes back as `OwnedResult::$failure` (also `TransactionLostException`, and the `TransactionConfigurationException` of a missing connection with `owner: true`) so the caller maps it with the owner flag. Built on `RunInTransaction`, which stays byte-compatible. Negative depth throws `InvalidArgumentException`.
+- `RunInTransaction`: without a `$failed` closure the default also recognises `JardisSupport\Contract\Kernel\OutcomeInterface::isFailed()` (needs a contracts release that ships the interface), next to a `DomainResponseInterface` with status 400 and above. The `__invoke` signature is unchanged; no import of `workflow` or `response`.
+
 ### Fixed
 - `RunInTransaction`: the savepoint of a bracket inside an open transaction is named `<caller name>_<object id of the work closure>` instead of the caller's name as given. Nested brackets that passed the same name (two doors that both saw depth 0) overwrote one another's savepoint on MySQL/MariaDB (`RELEASE SAVEPOINT` failed with 1305 and surfaced as `TransactionLostException`); the name is now unique among the open brackets of a connection. No signature change. The caller's name is cut at its end when the suffix would exceed `SavepointInterface::MAX_NAME_LENGTH`.
 

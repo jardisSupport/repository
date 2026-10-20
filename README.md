@@ -222,6 +222,27 @@ $response = (new RunInTransaction())(
 
 The bracket does not translate conflicts: a `TransientConflictException` leaves the bracket as it came (the 409 answer is the caller's business). `TransactionLostException` is the one exception it adds: the transaction is lost after a failed rollback - the owner of the transaction answers 409 transient, one who does not own it throws it on; a Persist never translates it.
 
+Without a `$failed` closure, an answer is failed when it is a `JardisSupport\Contract\Kernel\OutcomeInterface` that `isFailed()` (contracts, since the release that ships it - e.g. the `ProcessOutcome` of `jardissupport/workflow`), or a `DomainResponseInterface` with status 400 and above. The package imports only the contract.
+
+### Owned transaction - RunOwnedTransaction
+
+`RunOwnedTransaction` is `RunInTransaction` for a use case that knows only its depth. It derives what the caller would otherwise compute: the savepoint name `sp_<depth>`, "nested" (`depth > 0`), and the ownership - and it hands the ownership back.
+
+```php
+use JardisSupport\Repository\Handler\Transaction\RunOwnedTransaction;
+
+$done = (new RunOwnedTransaction())(
+    $connection,         // ?DbConnectionInterface, as for RunInTransaction
+    fn() => $runProcess(),
+    $depth,              // 0 = outermost; a sub-process passes the depth of its caller plus one
+);
+// $done->result   the answer of the work (null when it threw)
+// $done->owner    true when no transaction was open on entry; read before the bracket acts
+// $done->failure  null, or the throwable after the rollback - not thrown, so the caller can map it with $done->owner
+```
+
+A failed answer (see above) rolls back and comes back as `result`; a throw rolls back (to the savepoint) and comes back as `failure` - including `TransactionLostException` and the `TransactionConfigurationException` of a missing connection (`owner: true`). The owner answers a 5xx cause, one who is not the owner throws it on. Commit, rollback and savepoint order are those of `RunInTransaction`; a negative depth throws `InvalidArgumentException`. Optional fourth argument: a `$failed` closure that replaces the default.
+
 ## Documentation
 
 Full documentation, guides, and API reference:
