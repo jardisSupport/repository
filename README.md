@@ -243,6 +243,12 @@ $done = (new RunOwnedTransaction())(
 
 A failed answer (see above) rolls back and comes back as `result`; a throw rolls back (to the savepoint) and comes back as `failure` - including `TransactionLostException` and the `TransactionConfigurationException` of a missing connection (`owner: true`). The owner answers a 5xx cause, one who is not the owner throws it on. Commit, rollback and savepoint order are those of `RunInTransaction`; a negative depth throws `InvalidArgumentException`. Optional fourth argument: a `$failed` closure that replaces the default.
 
+A use case that opted out of the bracket passes `transactional: false` (fifth argument): the work runs as it is, nothing is begun, committed or rolled back, and a missing connection is no configuration error. Ownership is read the same way and a throw comes back as `failure` the same way - so the caller maps both forms identically.
+
+```php
+$done = (new RunOwnedTransaction())($connection, fn() => $runProcess(), $depth, transactional: false);
+```
+
 ## Documentation
 
 Full documentation, guides, and API reference:

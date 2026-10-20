@@ -20,6 +20,11 @@ use JardisSupport\Repository\Data\OwnedResult;
  * that `isFailed()`, or a {@see \JardisSupport\Contract\Kernel\DomainResponseInterface} with status 400 and
  * above; a `$failed` closure overrides it. A failed answer rolls back and is returned as the result.
  *
+ * With `transactional: false` the use case opted out of the bracket: the work runs as it is, nothing is begun,
+ * committed or rolled back, and a connection may be missing. Ownership is read the same way (no transaction open
+ * on entry) and a throw comes back the same way in {@see OwnedResult::$failure}; a failed answer is simply the
+ * result (nothing to roll back, `$failed` and `$depth` do not apply).
+ *
  * A throw is not thrown here: the bracket rolls back (to the savepoint), and the cause comes back in
  * {@see OwnedResult::$failure} together with `owner`, because only now the caller can map it - the owner
  * answers, one who is not the owner throws it on. That includes the bracket's own
@@ -36,13 +41,15 @@ final class RunOwnedTransaction
     /**
      * @param \Closure(): mixed $work
      * @param (\Closure(mixed): bool)|null $failed
+     * @param bool $transactional false runs the work without the bracket (ownership and failure answered the same)
      * @throws \InvalidArgumentException when the depth is negative
      */
     public function __invoke(
         ?DbConnectionInterface $connection,
         \Closure $work,
         int $depth = 0,
-        ?\Closure $failed = null
+        ?\Closure $failed = null,
+        bool $transactional = true
     ): OwnedResult {
         if ($depth < 0) {
             throw new \InvalidArgumentException(
@@ -53,6 +60,10 @@ final class RunOwnedTransaction
         $owner = $connection?->inTransaction() !== true;
 
         try {
+            if (!$transactional) {
+                return new OwnedResult($work(), $owner);
+            }
+
             return new OwnedResult(($this->bracket)($connection, 'sp_' . $depth, $work, $failed, $depth > 0), $owner);
         } catch (\Throwable $failure) {
             return new OwnedResult(null, $owner, $failure);

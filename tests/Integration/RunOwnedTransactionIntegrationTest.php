@@ -237,6 +237,101 @@ final class RunOwnedTransactionIntegrationTest extends TestCase
         $this->assertSame([], $this->ledger->notes());
     }
 
+    public function testWithoutBracketOwnerRunsTheWorkAndTouchesNoTransaction(): void
+    {
+        $outcome = new FakeOutcome(ResponseStatus::Success);
+
+        $done = ($this->bracket)($this->connection, function () use ($outcome) {
+            $this->ledger->add('kept');
+
+            return $outcome;
+        }, 0, null, false);
+
+        $this->assertSame($outcome, $done->result);
+        $this->assertTrue($done->owner);
+        $this->assertNull($done->failure);
+        $this->assertSame([], $this->connection->calls(), 'no bracket: nothing begun, committed or rolled back');
+        $this->assertSame(['kept'], $this->ledger->notes());
+    }
+
+    public function testWithoutBracketAFailedAnswerIsJustTheResult(): void
+    {
+        $outcome = new FakeOutcome(ResponseStatus::RuleViolation);
+
+        $done = ($this->bracket)($this->connection, static fn() => $outcome, 0, null, false);
+
+        $this->assertSame($outcome, $done->result);
+        $this->assertNull($done->failure);
+        $this->assertSame([], $this->connection->calls());
+    }
+
+    public function testWithoutBracketNotOwnerWhenATransactionIsOpen(): void
+    {
+        $this->pdo->beginTransaction();
+        $this->ledger->add('outer');
+
+        $done = ($this->bracket)($this->connection, function () {
+            $this->ledger->add('inner');
+
+            return 'ok';
+        }, 2, null, false);
+
+        $this->assertSame('ok', $done->result);
+        $this->assertFalse($done->owner);
+        $this->assertSame([], $this->connection->calls(), 'no savepoint either');
+        $this->assertTrue($this->pdo->inTransaction());
+        $this->pdo->commit();
+        $this->assertSame(['outer', 'inner'], $this->ledger->notes());
+    }
+
+    public function testWithoutBracketAThrowComesBackAsFailureOfTheOwnerAndIsNotRolledBack(): void
+    {
+        $cause = new \RuntimeException('boom');
+
+        $done = ($this->bracket)($this->connection, function () use ($cause) {
+            $this->ledger->add('stays');
+
+            throw $cause;
+        }, 0, null, false);
+
+        $this->assertNull($done->result);
+        $this->assertTrue($done->owner);
+        $this->assertSame($cause, $done->failure);
+        $this->assertSame([], $this->connection->calls());
+        $this->assertSame(['stays'], $this->ledger->notes());
+    }
+
+    public function testWithoutBracketAThrowWithOpenTransactionComesBackWithOwnerFalse(): void
+    {
+        $this->pdo->beginTransaction();
+        $cause = new \RuntimeException('boom');
+
+        $done = ($this->bracket)($this->connection, static function () use ($cause) {
+            throw $cause;
+        }, 1, null, false);
+
+        $this->assertFalse($done->owner);
+        $this->assertSame($cause, $done->failure);
+        $this->assertTrue($this->pdo->inTransaction());
+        $this->pdo->rollBack();
+    }
+
+    public function testWithoutBracketAMissingConnectionIsNoConfigurationError(): void
+    {
+        $done = ($this->bracket)(null, static fn() => 'ran', 0, null, false);
+
+        $this->assertSame('ran', $done->result);
+        $this->assertTrue($done->owner);
+        $this->assertNull($done->failure);
+    }
+
+    public function testWithoutBracketNegativeDepthIsStillRefused(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        ($this->bracket)($this->connection, static fn() => 'x', -1, null, false);
+    }
+
     public function testNegativeDepthIsRefused(): void
     {
         $this->expectException(\InvalidArgumentException::class);
