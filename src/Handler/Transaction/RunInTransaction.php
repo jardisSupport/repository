@@ -7,6 +7,7 @@ namespace JardisSupport\Repository\Handler\Transaction;
 use JardisSupport\Contract\DbConnection\DbConnectionInterface;
 use JardisSupport\Contract\DbConnection\SavepointInterface;
 use JardisSupport\Contract\Kernel\DomainResponseInterface;
+use JardisSupport\Contract\Kernel\OutcomeInterface;
 use JardisSupport\Repository\Exception\TransactionConfigurationException;
 use JardisSupport\Repository\Exception\TransactionLostException;
 
@@ -28,8 +29,8 @@ use JardisSupport\Repository\Exception\TransactionLostException;
  * 5. No connection is a configuration error; opting out is the caller's choice - it does not call the
  *    bracket.
  *
- * Without `$failed`, an answer is failed when it is a {@see DomainResponseInterface} with status 400 or
- * above.
+ * Without `$failed`, an answer is failed when it is an {@see OutcomeInterface} that `isFailed()`, or a
+ * {@see DomainResponseInterface} with status 400 or above.
  */
 final class RunInTransaction
 {
@@ -53,8 +54,11 @@ final class RunInTransaction
             );
         }
 
-        $failed ??= static fn(mixed $result): bool => $result instanceof DomainResponseInterface
-            && $result->getStatus() >= 400;
+        $failed ??= static fn(mixed $result): bool => match (true) {
+            $result instanceof OutcomeInterface => $result->isFailed(),
+            $result instanceof DomainResponseInterface => $result->getStatus() >= 400,
+            default => false,
+        };
 
         if ($connection->inTransaction()) {
             return $this->inSavepoint($connection, $savepoint, $work, $failed);
