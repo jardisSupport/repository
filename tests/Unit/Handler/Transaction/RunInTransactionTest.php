@@ -6,10 +6,12 @@ namespace JardisSupport\Repository\Tests\Unit\Handler\Transaction;
 
 use JardisSupport\Contract\DbConnection\DbConnectionInterface;
 use JardisSupport\Contract\Kernel\DomainResponseInterface;
+use JardisSupport\Contract\Kernel\ResponseStatus;
 use JardisSupport\Contract\Repository\Exception\TransientConflictException;
 use JardisSupport\Repository\Exception\TransactionConfigurationException;
 use JardisSupport\Repository\Exception\TransactionLostException;
 use JardisSupport\Repository\Handler\Transaction\RunInTransaction;
+use JardisSupport\Repository\Tests\Support\Db\FakeOutcome;
 use JardisSupport\Repository\Tests\Support\Db\FakeSavepointConnection;
 use JardisSupport\Repository\Tests\Support\Db\Ledger;
 use JardisSupport\Repository\Tests\Support\Db\PlainConnection;
@@ -102,6 +104,30 @@ final class RunInTransactionTest extends TestCase
 
         $this->assertSame($ok, $answer);
         $this->assertSame(['kept'], $this->ledger->notes(), 'a 2xx answer commits');
+    }
+
+    public function testDefaultPredicateAlsoRecognisesAFailedContractsOutcome(): void
+    {
+        $failed = new FakeOutcome(ResponseStatus::Conflict);
+        $answer = ($this->bracket)($this->connection, 'sp', function () use ($failed) {
+            $this->ledger->add('lost');
+
+            return $failed;
+        });
+
+        $this->assertSame($failed, $answer);
+        $this->assertSame(['beginTransaction', 'rollback'], $this->connection->calls());
+        $this->assertSame([], $this->ledger->notes());
+
+        $ok = new FakeOutcome(ResponseStatus::Created);
+        $answer = ($this->bracket)($this->connection, 'sp', function () use ($ok) {
+            $this->ledger->add('kept');
+
+            return $ok;
+        });
+
+        $this->assertSame($ok, $answer);
+        $this->assertSame(['kept'], $this->ledger->notes(), 'an outcome that did not fail commits');
     }
 
     public function testSavepointNameIsDerivedFromTheOneTheCallerGives(): void
