@@ -6,6 +6,9 @@ versioning follows [SemVer](https://semver.org/). Releases before 1.7.0 are list
 
 ## [Unreleased]
 
+### Fixed
+- `UpdateHandler`: `update()` no longer answers `false` for a row that matched but stayed unchanged. MySQL/MariaDB count changed rows in `rowCount()` (an UPDATE setting `'1'` onto a stored DECIMAL `1.00` reports 0), PostgreSQL and SQLite count matched rows. On `rowCount() === 0` one SELECT with the same condition (key plus `$expected`) on the same connection decides: row found is `true`, none is `false`. On MySQL/MariaDB that SELECT is a locking read (`FOR UPDATE`), because a plain SELECT would read the REPEATABLE READ snapshot and report a row another connection changed since as a hit. A positive `rowCount()` runs no further statement. `DeleteHandler` is unchanged. No signature change.
+
 ## [1.9.0] - 2026-10-21
 
 ### Added
