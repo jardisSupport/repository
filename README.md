@@ -23,7 +23,7 @@ An implementation of the repository pattern for PHP: a generic CRUD repository o
 - **Query Builder Support** — `findByQuery()` accepts any `DbQueryBuilderInterface` for complex SELECT statements
 - **Exists Check** — `exists()` avoids full row fetches when only presence matters
 - **Batch Delete** — `deleteAll()` removes multiple rows in a single call
-- **Conditional Writes** — optional `$expected` on `update()`/`delete()` guards against stale reads (optimistic concurrency); returns `false` when the row no longer matches
+- **Conditional Writes** — optional `$expected` on `update()`/`delete()` guards against stale reads (optimistic concurrency); returns `false` when no row matches the key and `$expected` (an unchanged-but-matching row is still `true`)
 - **Lazy Connection Initialization** — reader and writer connections are opened only when first used
 - **Typed Bindings** — every value is bound with its matching `PDO::PARAM_*` type (bool/int/null/string) instead of a blanket `execute($bindings)`; `false` reaches Postgres as a real `BOOLEAN`, not as `''`
 
@@ -126,7 +126,7 @@ $repository->update('orders', 'id', $id, ['status' => 'cancelled'], ['status' =>
 > - `false` means the row no longer carries the expected values — or the `id` doesn't exist. For a conflict check both are the same signal: the read this write was based on is no longer valid.
 > - `$expected` values must be `scalar|null`; an object or array throws `InvalidArgumentException`.
 > - An empty `$values` combined with a non-empty `$expected` throws `InvalidArgumentException` too — the existing "nothing to write" shortcut would otherwise skip the check silently and return `true` unchecked. Use `exists()`/`findById()` for a pure read-side check.
-> - **MySQL note:** `rowCount()` counts changed rows — an update that would set identical values reports `0`. This doesn't fire for repositories built from changed-field diffs, but it's a caveat if `$values` is assembled differently.
+> - **MySQL/MariaDB note:** the driver's `rowCount()` counts changed rows, so an update that matches the row but sets identical values (`'1'` onto a stored DECIMAL `1.00`) reports `0`. The handler then checks with one SELECT (same connection, same condition) whether the row exists: `true` if it does, `false` only when no row meets the condition (a locking read, so a peer's committed change after your snapshot still counts as a conflict). A positive `rowCount()` runs no further statement.
 
 ### Error handling
 
