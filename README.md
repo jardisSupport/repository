@@ -160,6 +160,8 @@ The integration tests run against MySQL, **MariaDB** and PostgreSQL (`make start
 
 (contracts >= 2.6, repository >= 1.6) Every write — `insert()` (all `PkStrategy` values), `update()`, `delete()`, `deleteAll()` — throws `TransientConflictException` (subtype of `PersistException`) when the database rejects the statement because of a **snapshot/serialization conflict or a deadlock**: the statement was not wrong, another transaction got in between. Catch it **before** `PersistException`; the unique-violation path is unchanged.
 
+The translation sits in `QueryExecutor` and covers **every statement path** (`execute`, `fetchAll`, `fetchOne`), not only the four write operations: a read or write run through the executor directly (a hand-written service that updates a counter row, `findByQuery` with a locking read) throws `TransientConflictException` too, so the caller answers 409 instead of a technical 500. Any other `PDOException` stays a `PDOException` there. The message carries no table name when the executor runs the statement itself.
+
 | Dialect | Detected | Meaning |
 |---------|----------|---------|
 | MySQL / MariaDB | driver code `1020` | row changed since the snapshot (`innodb_snapshot_isolation`, MariaDB default since 11.6) — ER_CHECKREAD, SQLSTATE `HY000` |

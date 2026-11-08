@@ -86,12 +86,17 @@ final class InsertHandler
         $dialect = $this->executor->getDialect();
 
         for ($attempt = 1; $attempt <= 3; $attempt++) {
-            $pk = $this->integerPkGenerator->generate(
-                $this->executor->getPdo(),
-                $dialect,
-                $table,
-                $pkColumn
-            );
+            try {
+                $pk = $this->integerPkGenerator->generate(
+                    $this->executor->getPdo(),
+                    $dialect,
+                    $table,
+                    $pkColumn
+                );
+            } catch (PDOException $e) {
+                // the MAX+1 read runs on the PDO directly, not through the executor
+                throw ($this->translateTransientConflict)($e, $dialect, $table) ?? $e;
+            }
             $values[$pkColumn] = $pk;
 
             try {
@@ -170,10 +175,6 @@ final class InsertHandler
             );
         }
 
-        $transient = ($this->translateTransientConflict)($e, $this->executor->getDialect(), $table);
-        if ($transient !== null) {
-            return $transient;
-        }
 
         return new PersistException('Insert failed for ' . $table . ': ' . $e->getMessage(), 0, $e);
     }
