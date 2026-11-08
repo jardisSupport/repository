@@ -31,4 +31,16 @@ final class TranslateTransientConflictTest extends TestCase
 
         $this->assertNull((new TranslateTransientConflict())($pdoException, 'mysql', 'orders'));
     }
+
+    public function testTableIsOptional(): void
+    {
+        $pdoException = new PDOException('Deadlock found');
+        $pdoException->errorInfo = ['40001', 1213, 'Deadlock found'];
+
+        $result = (new TranslateTransientConflict())($pdoException, 'mysql');
+
+        $this->assertNotNull($result);
+        $this->assertSame('1213', $result->getDriverCode());
+        $this->assertSame('Transient conflict: Deadlock found', $result->getMessage());
+    }
 }

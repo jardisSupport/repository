@@ -8,8 +8,8 @@ use JardisSupport\Contract\Repository\Exception\TransientConflictException;
 use PDOException;
 
 /**
- * Turns a transient concurrency conflict (see DetectTransientConflict) of a write on $table into a
- * TransientConflictException carrying the driver code and the PDOException as previous.
+ * Turns a transient concurrency conflict (see DetectTransientConflict) of a statement (on $table, if the caller knows
+ * it) into a TransientConflictException carrying the driver code and the PDOException as previous.
  * Returns null if the exception is not a transient conflict — the caller keeps its own error path.
  */
 final class TranslateTransientConflict
@@ -21,7 +21,7 @@ final class TranslateTransientConflict
         $this->detectTransientConflict = new DetectTransientConflict();
     }
 
-    public function __invoke(PDOException $e, string $dialect, string $table): ?TransientConflictException
+    public function __invoke(PDOException $e, string $dialect, ?string $table = null): ?TransientConflictException
     {
         $driverCode = ($this->detectTransientConflict)($e, $dialect);
         if ($driverCode === null) {
@@ -29,7 +29,7 @@ final class TranslateTransientConflict
         }
 
         return new TransientConflictException(
-            'Transient conflict on ' . $table . ': ' . $e->getMessage(),
+            'Transient conflict' . ($table === null ? '' : ' on ' . $table) . ': ' . $e->getMessage(),
             $driverCode,
             $e
         );
