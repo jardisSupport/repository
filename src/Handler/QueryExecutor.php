@@ -10,12 +10,18 @@ use PDO;
 
 /**
  * Executes prepared queries against a database connection.
+ *
+ * The single place where a transient concurrency conflict of the database (snapshot/serialization conflict,
+ * deadlock - see DetectTransientConflict) becomes a TransientConflictException, on every statement path
+ * (fetchAll, fetchOne, execute). Every other PDOException passes through unchanged for the caller to classify.
  */
 final readonly class QueryExecutor
 {
     private string $dialect;
 
     private BindTypedParameters $bindTypedParameters;
+
+    private TranslateTransientConflict $translateTransientConflict;
 
     public function __construct(
         private DbConnectionInterface $connection,
@@ -26,6 +32,7 @@ final readonly class QueryExecutor
             default => $connection->getDriverName(),
         };
         $this->bindTypedParameters = $bindTypedParameters ?? new BindTypedParameters();
+        $this->translateTransientConflict = new TranslateTransientConflict();
     }
 
     /**
@@ -33,11 +40,9 @@ final readonly class QueryExecutor
      */
     public function fetchAll(DbPreparedQueryInterface $prepared): array
     {
-        $stmt = $this->connection->pdo()->prepare($prepared->sql());
-        ($this->bindTypedParameters)($stmt, $prepared->bindings());
-        $stmt->execute();
-
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return $this->guarded(function () use ($prepared): array {
+            return $this->run($prepared)->fetchAll(PDO::FETCH_ASSOC);
+        });
     }
 
     /**
@@ -45,21 +50,16 @@ final readonly class QueryExecutor
      */
     public function fetchOne(DbPreparedQueryInterface $prepared): ?array
     {
-        $stmt = $this->connection->pdo()->prepare($prepared->sql());
-        ($this->bindTypedParameters)($stmt, $prepared->bindings());
-        $stmt->execute();
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $this->guarded(function () use ($prepared): ?array {
+            $row = $this->run($prepared)->fetch(PDO::FETCH_ASSOC);
 
-        return $row === false ? null : $row;
+            return $row === false ? null : $row;
+        });
     }
 
     public function execute(DbPreparedQueryInterface $prepared): \PDOStatement
     {
-        $stmt = $this->connection->pdo()->prepare($prepared->sql());
-        ($this->bindTypedParameters)($stmt, $prepared->bindings());
-        $stmt->execute();
-
-        return $stmt;
+        return $this->guarded(fn(): \PDOStatement => $this->run($prepared));
     }
 
     public function getDialect(): string
@@ -70,5 +70,28 @@ final readonly class QueryExecutor
     public function getPdo(): PDO
     {
         return $this->connection->pdo();
+    }
+
+    private function run(DbPreparedQueryInterface $prepared): \PDOStatement
+    {
+        $stmt = $this->connection->pdo()->prepare($prepared->sql());
+        ($this->bindTypedParameters)($stmt, $prepared->bindings());
+        $stmt->execute();
+
+        return $stmt;
+    }
+
+    /**
+     * @template T
+     * @param \Closure(): T $statement
+     * @return T
+     */
+    private function guarded(\Closure $statement): mixed
+    {
+        try {
+            return $statement();
+        } catch (\PDOException $e) {
+            throw ($this->translateTransientConflict)($e, $this->dialect) ?? $e;
+        }
     }
 }

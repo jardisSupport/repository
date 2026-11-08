@@ -32,14 +32,12 @@ final class UpdateHandler
     private readonly Closure $applyExpectedConditions;
     private readonly DetectUniqueViolation $detectUniqueViolation;
     private readonly ResolveViolatedColumns $resolveViolatedColumns;
-    private readonly TranslateTransientConflict $translateTransientConflict;
 
     public function __construct(
         private readonly QueryExecutor $executor,
     ) {
         $this->detectUniqueViolation = new DetectUniqueViolation();
         $this->resolveViolatedColumns = new ResolveViolatedColumns();
-        $this->translateTransientConflict = new TranslateTransientConflict();
         $this->applyExpectedConditions = (new ApplyExpectedConditions())->__invoke(...);
     }
 
@@ -100,10 +98,6 @@ final class UpdateHandler
                 );
             }
 
-            $transient = ($this->translateTransientConflict)($e, $this->executor->getDialect(), $table);
-            if ($transient !== null) {
-                throw $transient;
-            }
 
             throw new PersistException(
                 'Update failed for ' . $table . ': ' . $e->getMessage(),
